@@ -111,7 +111,8 @@ PRISM_FILES = prism/api_node.$(OBJEXT) \
 		prism/prism.$(OBJEXT) \
 		prism_init.$(OBJEXT)
 
-COMMONOBJS    = array.$(OBJEXT) \
+COMMONOBJS    = abrt.$(OBJEXT) \
+                array.$(OBJEXT) \
 		ast.$(OBJEXT) \
 		bignum.$(OBJEXT) \
 		class.$(OBJEXT) \
