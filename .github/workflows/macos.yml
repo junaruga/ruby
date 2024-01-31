@@ -13,6 +13,17 @@ on:
     # https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/troubleshooting-required-status-checks#handling-skipped-but-required-checks
   merge_group:
 
+env:
+  # GITHUB_PULL_REQUEST_URL are used for commenting test reports in Launchable Github App.
+  # https://github.com/launchableinc/cli/blob/v1.80.1/launchable/utils/link.py#L42
+  GITHUB_PULL_REQUEST_URL: ${{ github.event.pull_request.html_url }}
+  # The following envs are necessary in Launchable tokenless authentication.
+  # https://github.com/launchableinc/cli/blob/v1.80.1/launchable/utils/authentication.py#L20
+  LAUNCHABLE_ORGANIZATION: ${{ github.repository_owner }}
+  LAUNCHABLE_WORKSPACE: ${{ github.event.repository.name }}
+  # https://github.com/launchableinc/cli/blob/v1.80.1/launchable/utils/authentication.py#L71
+  GITHUB_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
 concurrency:
   group: ${{ github.workflow }} / ${{ startsWith(github.event_name, 'pull') && github.ref_name || github.sha }}
   cancel-in-progress: ${{ startsWith(github.event_name, 'pull') }}
@@ -28,7 +39,7 @@ jobs:
         configure: ['']
         os: ${{ fromJSON(format('["macos-12","macos-13"{0}]', (github.repository == 'ruby/ruby' && ',"macos-arm-oss"' || ''))) }}
         include:
-          - test_task: test-all TESTS=--repeat-count=2
+          - test_task: test-all
             os: ${{ github.repository == 'ruby/ruby' && 'macos-arm-oss' || 'macos-13' }}
           - test_task: test-bundled-gems
             os: ${{ github.repository == 'ruby/ruby' && 'macos-arm-oss' || 'macos-13' }}
@@ -52,6 +63,8 @@ jobs:
         with:
           sparse-checkout-cone-mode: false
           sparse-checkout: /.github
+          # Set fetch-depth: 0 so that Launchable can receive commits information.
+          fetch-depth: 0
 
       - name: Install libraries
         uses: ./.github/actions/setup/macos
@@ -71,9 +84,38 @@ jobs:
 
       - run: make
 
+      # Launchable CLI requires Python and Java
+      # https://www.launchableinc.com/docs/resources/cli-reference/
+      - name: Set up Python
+        uses: actions/setup-python@871daa956ca9ea99f3c3e30acb424b7960676734 # v5.0.0
+        with:
+          python-version: "3.10"
+      - name: Set up Java
+        uses: actions/setup-java@7a445ee88d4e23b52c33fdc7601e40278616c7f8 # v4.0.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Set up Launchable
+        id: setup_launchable
+        run: |
+          set -ex
+          pip install launchable
+          launchable verify
+          : # The build name cannot include a slash, so we replace the string here.
+          github_ref=`echo ${{ github.ref }} | sed 's/\//_/g'`
+          : # With the --name option, we need to configure a unique identifier for this build.
+          : # To avoid setting the same build name as the CI which runs on other branches, we use the branch name here.
+          launchable record build --name ${github_ref}_${GITHUB_PR_HEAD_SHA}
+          echo "TESTOPTS=--launchable-test-reports=${GITHUB_RUN_ID}.json" >> "$GITHUB_ENV"
+        if: ${{ github.repository == 'ruby/ruby' && (matrix.test_task == 'check' || matrix.test_task == 'test-all') }}
+
+      - name: Set repeat-count option for make ${{ matrix.test_task }}
+        run: echo "TESTOPTS=$TESTOPTS --repeat-count=2" >> "$GITHUB_ENV"
+        if: ${{ matrix.test_task == 'test-all' }}
+
       - name: make ${{ matrix.test_task }}
         run: |
-          make -s ${{ matrix.test_task }} ${TESTS:+TESTS=`echo "$TESTS" | sed 's| |$$/ -n!/|g;s|^|-n!/|;s|$|$$/|'`}
+          make -s ${{ matrix.test_task }} TESTS="$TESTOPTS" ${TESTS:+TESTS=`echo "$TESTS" | sed 's| |$$/ -n!/|g;s|^|-n!/|;s|$|$$/|'`}
         timeout-minutes: 60
         env:
           RUBY_TESTOPTS: '-q --tty=no'
@@ -91,6 +133,10 @@ jobs:
           PRECHECK_BUNDLED_GEMS: 'no'
         if: ${{ matrix.test_task == 'check' && matrix.skipped_tests != '' }}
         continue-on-error: ${{ matrix.continue-on-skipped_tests || false }}
+
+      - name: Launchable - record tests
+        run: launchable record tests --flavor os=${{ matrix.os }} --flavor test_task=${{ matrix.test_task }} raw ${GITHUB_RUN_ID}.json
+        if: ${{ always() && github.repository == 'ruby/ruby' && (matrix.test_task == 'check' || matrix.test_task == 'test-all') }}
 
       - uses: ./.github/actions/slack
         with:
