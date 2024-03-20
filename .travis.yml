@@ -120,33 +120,20 @@ matrix:
     # - name: arm32-linux
   fast_finish: true
 
-before_script:
-  - ./autogen.sh
-  - mkdir build
-  - cd build
-  - $SETARCH ../configure -C --disable-install-doc --prefix=$(pwd)/install
-  - $SETARCH make -s $JOBS
-  - make -s $JOBS install
-  # Useful info to report issues to the Ruby.
-  - $SETARCH $(pwd)/install/bin/ruby -v
-  # Useful info To report issues to the RubyGems.
-  - $SETARCH $(pwd)/install/bin/gem env
-
 script:
-  - $SETARCH make -s test
-  - ../tool/travis_wait.sh $SETARCH make -s test-all RUBYOPT="-w"
-  - ../tool/travis_wait.sh $SETARCH make -s test-spec
+  - false
 
 # We want to be notified when something happens.
 notifications:
-  webhooks:
-    urls:
-      # ruby-lang slack: ruby/simpler-alerts-bot (travis)
-      - secure: mRsoS/UbqDkKkW5p3AEqM27d4SZnV6Gsylo3bm8T/deltQzTsGzZwrm7OIBXZv0UFZdE68XmPlyHfZFLSP2V9QZ7apXMf9/vw0GtcSe1gchtnjpAPF6lYBn7nMCbVPPx9cS0dwL927fjdRM1vj7IKZ2bk4F0lAJ25R25S6teqdk=
-    on_success: never
-    on_failure: always
+  # webhooks:
+  #   urls:
+  #     # ruby-lang slack: ruby/simpler-alerts-bot (travis)
+  #     - secure: mRsoS/UbqDkKkW5p3AEqM27d4SZnV6Gsylo3bm8T/deltQzTsGzZwrm7OIBXZv0UFZdE68XmPlyHfZFLSP2V9QZ7apXMf9/vw0GtcSe1gchtnjpAPF6lYBn7nMCbVPPx9cS0dwL927fjdRM1vj7IKZ2bk4F0lAJ25R25S6teqdk=
+  #   on_success: never
+  #   on_failure: always
   email:
     recipients:
       - jaruga@ruby-lang.org
+      - jun.aruga@gmail.com
     on_success: never
     on_failure: always
