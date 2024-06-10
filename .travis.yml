@@ -39,5 +39,7 @@ notifications:
   email:
     recipients:
       - jaruga@ruby-lang.org
+      - nobu@ruby-lang.org
+      - hsbt@ruby-lang.org
     on_success: never
     on_failure: always
