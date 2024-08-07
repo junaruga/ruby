@@ -30,7 +30,7 @@ else
   TAG="${TAG}-copy"
   rm -rf "${TMP_DIR}"
   mkdir -p "${TMP_DIR}"
-  for file in ${@}; do
+  for file in "${@}"; do
     cp -p "${file}" "${TMP_DIR}"
   done
   "${DOCKER}" build --rm -t "${TAG}" --build-arg=IN_DIR="${TMP_DIR}" -f ${TOOL_DIR}/annocheck/Dockerfile-copy .
