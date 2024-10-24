@@ -75,6 +75,7 @@ env:
   - &arm32-linux
     name: arm32-linux
     arch: arm64
+    dist: focal
     # https://packages.ubuntu.com/jammy/crossbuild-essential-armhf
     compiler: arm-linux-gnueabihf-gcc
     env:
