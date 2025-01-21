@@ -1601,8 +1601,6 @@ yes-test-syntax-suggest: $(PREPARE_SYNTAX_SUGGEST)
 	$(ACTIONS_ENDGROUP)
 no-test-syntax-suggest:
 
-check: $(DOT_WAIT) $(PREPARE_SYNTAX_SUGGEST) test-syntax-suggest
-
 test-bundler-precheck: $(TEST_RUNNABLE)-test-bundler-precheck
 no-test-bundler-precheck:
 yes-test-bundler-precheck: main $(arch)-fake.rb
