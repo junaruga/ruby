@@ -35,7 +35,7 @@ module Gem
   # specified in the environment
 
   def self.default_dir
-    @default_dir ||= File.join(RbConfig::CONFIG["rubylibprefix"], "gems", RbConfig::CONFIG["ruby_version"])
+    @default_dir ||= File.join(RbConfig::CONFIG["rubylibprefix"], "gems", RbConfig::CONFIG["ruby_version_dir_name"] || RbConfig::CONFIG["ruby_version"])
   end
 
   ##
@@ -104,7 +104,8 @@ module Gem
     gem_dir = File.join(Gem.user_home, ".gem")
     gem_dir = File.join(Gem.data_home, "gem") unless File.exist?(gem_dir)
     parts = [gem_dir, ruby_engine]
-    parts << RbConfig::CONFIG["ruby_version"] unless RbConfig::CONFIG["ruby_version"].empty?
+    ruby_version_dir_name = RbConfig::CONFIG["ruby_version_dir_name"] || RbConfig::CONFIG["ruby_version"]
+    parts << ruby_version_dir_name unless ruby_version_dir_name.empty?
     File.join parts
   end
 
@@ -265,7 +266,7 @@ module Gem
     return nil unless RbConfig::CONFIG.key? "vendordir"
 
     File.join RbConfig::CONFIG["vendordir"], "gems",
-              RbConfig::CONFIG["ruby_version"]
+              RbConfig::CONFIG["ruby_version_dir_name"] || RbConfig::CONFIG["ruby_version"]
   end
 
   ##
