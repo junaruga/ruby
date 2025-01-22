@@ -40,4 +40,7 @@ set -eux
 # cat ruby-3.4.0-Extract-hardening-CFLAGS-to-a-special-hardenflags-variable.patch | patch -p1
 
 # %patch 13 -p1
+# Skip this patch.
+
 # %patch 14 -p1
+# Skip this patch.
