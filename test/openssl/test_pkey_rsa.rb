@@ -99,13 +99,13 @@ class OpenSSL::TestPKeyRSA < OpenSSL::PKeyTestCase
     pssopts = {
       "rsa_padding_mode" => "pss",
       "rsa_pss_saltlen" => 20,
-      "rsa_mgf1_md" => "SHA1"
+      "rsa_mgf1_md" => "SHA256"
     }
     sig_pss = key.sign("SHA256", data, pssopts)
     assert_equal 128, sig_pss.bytesize
     assert_equal true, key.verify("SHA256", sig_pss, data, pssopts)
     assert_equal true, key.verify_pss("SHA256", sig_pss, data,
-                                      salt_length: 20, mgf1_hash: "SHA1")
+                                      salt_length: 20, mgf1_hash: "SHA256")
     # Defaults to PKCS #1 v1.5 padding => verification failure
     assert_equal false, key.verify("SHA256", sig_pss, data)
 
@@ -179,31 +179,31 @@ class OpenSSL::TestPKeyRSA < OpenSSL::PKeyTestCase
     data = "Sign me!"
     invalid_data = "Sign me?"
 
-    signature = key.sign_pss("SHA256", data, salt_length: 20, mgf1_hash: "SHA1")
+    signature = key.sign_pss("SHA256", data, salt_length: 20, mgf1_hash: "SHA256")
     assert_equal 128, signature.bytesize
     assert_equal true,
-      key.verify_pss("SHA256", signature, data, salt_length: 20, mgf1_hash: "SHA1")
+      key.verify_pss("SHA256", signature, data, salt_length: 20, mgf1_hash: "SHA256")
     assert_equal true,
-      key.verify_pss("SHA256", signature, data, salt_length: :auto, mgf1_hash: "SHA1")
+      key.verify_pss("SHA256", signature, data, salt_length: :auto, mgf1_hash: "SHA256")
     assert_equal false,
-      key.verify_pss("SHA256", signature, invalid_data, salt_length: 20, mgf1_hash: "SHA1")
+      key.verify_pss("SHA256", signature, invalid_data, salt_length: 20, mgf1_hash: "SHA256")
 
-    signature = key.sign_pss("SHA256", data, salt_length: :digest, mgf1_hash: "SHA1")
+    signature = key.sign_pss("SHA256", data, salt_length: :digest, mgf1_hash: "SHA256")
     assert_equal true,
-      key.verify_pss("SHA256", signature, data, salt_length: 32, mgf1_hash: "SHA1")
+      key.verify_pss("SHA256", signature, data, salt_length: 32, mgf1_hash: "SHA256")
     assert_equal true,
-      key.verify_pss("SHA256", signature, data, salt_length: :auto, mgf1_hash: "SHA1")
+      key.verify_pss("SHA256", signature, data, salt_length: :auto, mgf1_hash: "SHA256")
     assert_equal false,
-      key.verify_pss("SHA256", signature, data, salt_length: 20, mgf1_hash: "SHA1")
+      key.verify_pss("SHA256", signature, data, salt_length: 20, mgf1_hash: "SHA256")
 
-    signature = key.sign_pss("SHA256", data, salt_length: :max, mgf1_hash: "SHA1")
+    signature = key.sign_pss("SHA256", data, salt_length: :max, mgf1_hash: "SHA256")
     assert_equal true,
-      key.verify_pss("SHA256", signature, data, salt_length: 94, mgf1_hash: "SHA1")
+      key.verify_pss("SHA256", signature, data, salt_length: 94, mgf1_hash: "SHA256")
     assert_equal true,
-      key.verify_pss("SHA256", signature, data, salt_length: :auto, mgf1_hash: "SHA1")
+      key.verify_pss("SHA256", signature, data, salt_length: :auto, mgf1_hash: "SHA256")
 
     assert_raise(OpenSSL::PKey::RSAError) {
-      key.sign_pss("SHA256", data, salt_length: 95, mgf1_hash: "SHA1")
+      key.sign_pss("SHA256", data, salt_length: 95, mgf1_hash: "SHA256")
     }
   end
 
