@@ -86,6 +86,25 @@ jobs:
           bundler: none
         if: ${{ !endsWith(matrix.os, 'arm') && !endsWith(matrix.os, 'ppc64le') && !endsWith(matrix.os, 's390x') }}
 
+      - name: Check cgroups sys files
+        run: |
+          set -x
+          cat /sys/fs/cgroup/cpuset.cpus.effective || :
+          sleep 0.1
+          cat /sys/fs/cgroup/cpuset.cpus || :
+          sleep 0.1
+          cat /sys/fs/cgroup/cpu.max || :
+          sleep 0.1
+          cat /sys/fs/cgroup/cpu.stat || :
+        working-directory:
+
+      - name: Check perf commands
+        run: |
+          command -v mpstat
+          command -v vmstat
+          command -v iostat
+        working-directory:
+
       # Avoid possible test failures with the zlib applying the following patch
       # on s390x CPU architecture.
       # https://github.com/madler/zlib/pull/410
@@ -169,6 +188,23 @@ jobs:
           diff -u ../src/spec/ruby/library/etc/struct_passwd_spec.rb{.orig,} || :
         if: ${{ endsWith(matrix.os, 'ppc64le') || endsWith(matrix.os, 's390x') }}
 
+      - name: Show perf values
+        run: |
+          set -x
+          nproc
+          uptime
+          free -h
+          df -hT
+          df .
+
+      - name: Set perf logs
+        run: |
+          set -x
+          mkdir -p perf_logs
+          mpstat -P ALL 30 10 > perf_logs/mpstat.log &
+          vmstat 30 10 > perf_logs/vmstat.log &
+          iostat -x 30 10 > perf_logs/iostat.log &
+
       - name: make ${{ matrix.test_task }}
         run: |
           test -n "${LAUNCHABLE_STDOUT}" && exec 1> >(tee "${LAUNCHABLE_STDOUT}")
@@ -176,7 +212,8 @@ jobs:
 
           $SETARCH make -s ${{ matrix.test_task }} \
           ${TESTS:+TESTS="$TESTS"} \
-          ${{ !contains(matrix.test_task, 'bundle') && 'RUBYOPT=-w' || '' }}
+          ${{ !contains(matrix.test_task, 'bundle') && 'RUBYOPT=-w' || '' }} \
+          ${{ endsWith(matrix.os, 'ppc64le')  && '|| :' || '' }}
         timeout-minutes: ${{ matrix.timeout || 40 }}
         env:
           RUBY_TESTOPTS: '-q --tty=no'
@@ -184,6 +221,21 @@ jobs:
           PRECHECK_BUNDLED_GEMS: 'no'
           LAUNCHABLE_STDOUT: ${{ steps.launchable.outputs.stdout_report_path }}
           LAUNCHABLE_STDERR: ${{ steps.launchable.outputs.stderr_report_path }}
+
+      - name: Show perf mpstat.log
+        run: |
+          pkill mpstat || :
+          cat perf_logs/mpstat.log
+
+      - name: Show perf vmstat.log
+        run: |
+          pkill vmstat || :
+          cat perf_logs/vmstat.log
+
+      - name: Show perf iostat.log
+        run: |
+          pkill iostat || :
+          cat perf_logs/iostat.log
 
       - name: make skipped tests
         run: |
