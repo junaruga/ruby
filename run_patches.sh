@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -eux -o pipefail
+
 # Patch0: ruby-2.3.0-ruby_version.patch
 # Patch1: ruby-2.1.0-Prevent-duplicated-paths-when-empty-version-string-i.patch
 # Patch2: ruby-2.1.0-Enable-configuration-of-archlibdir.patch
