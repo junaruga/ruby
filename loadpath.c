@@ -65,21 +65,37 @@ const char ruby_initial_load_paths[] =
     RUBY_SEARCH_PATH "\0"
 #endif
 #ifndef NO_RUBY_SITE_LIB
+#ifdef RUBY_LIB_VERSION_BLANK
+    RUBY_SITE_LIB "\0"
+#else
     RUBY_SITE_LIB2 "\0"
+#endif
 #ifdef RUBY_THINARCH
     RUBY_SITE_ARCH_LIB_FOR(RUBY_THINARCH) "\0"
 #endif
     RUBY_SITE_ARCH_LIB_FOR(RUBY_SITEARCH) "\0"
+#ifndef RUBY_LIB_VERSION_BLANK
     RUBY_SITE_LIB "\0"
+#endif
 #endif
 
 #ifndef NO_RUBY_VENDOR_LIB
+#ifdef RUBY_LIB_VERSION_BLANK
+    RUBY_VENDOR_LIB "\0"
+#else
     RUBY_VENDOR_LIB2 "\0"
+#endif
 #ifdef RUBY_THINARCH
     RUBY_VENDOR_ARCH_LIB_FOR(RUBY_THINARCH) "\0"
 #endif
     RUBY_VENDOR_ARCH_LIB_FOR(RUBY_SITEARCH) "\0"
+#ifndef RUBY_LIB_VERSION_BLANK
     RUBY_VENDOR_LIB "\0"
+#endif
+#endif
+
+#ifdef RUBYGEMS_DIR
+    RUBYGEMS_DIR "\0"
 #endif
 
     RUBY_LIB "\0"

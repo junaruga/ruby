@@ -111,7 +111,8 @@ PRISM_FILES = prism/api_node.$(OBJEXT) \
 		prism/prism.$(OBJEXT) \
 		prism_init.$(OBJEXT)
 
-COMMONOBJS    = array.$(OBJEXT) \
+COMMONOBJS    = abrt.$(OBJEXT) \
+                array.$(OBJEXT) \
 		ast.$(OBJEXT) \
 		bignum.$(OBJEXT) \
 		class.$(OBJEXT) \
@@ -1605,8 +1606,6 @@ yes-test-syntax-suggest: $(PREPARE_SYNTAX_SUGGEST)
 		$(RSPECOPTS) spec/syntax_suggest/$(SYNTAX_SUGGEST_SPECS)
 	$(ACTIONS_ENDGROUP)
 no-test-syntax-suggest:
-
-check: $(DOT_WAIT) $(PREPARE_SYNTAX_SUGGEST) test-syntax-suggest
 
 test-bundler-precheck: $(TEST_RUNNABLE)-test-bundler-precheck
 no-test-bundler-precheck:

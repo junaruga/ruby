@@ -136,7 +136,7 @@ RUBY_BASE_NAME=`echo ruby | sed "$program_transform_name"`
 RUBYW_BASE_NAME=`echo rubyw | sed "$program_transform_name"`
 AC_SUBST(RUBY_BASE_NAME)
 AC_SUBST(RUBYW_BASE_NAME)
-AC_SUBST(RUBY_VERSION_NAME, '${RUBY_BASE_NAME}-${ruby_version}')
+AC_SUBST(RUBY_VERSION_NAME, '${RUBY_BASE_NAME}-${ruby_version_dir_name}')
 
 dnl checks for alternative programs
 AC_CANONICAL_BUILD
@@ -354,7 +354,7 @@ test -z "$warnflags" ||
 AS_IF([test -z "${CFLAGS+set}"], [
     cflags=`echo " $cflags " | sed "$cflagspat;s/^ *//;s/ *$//"`
     orig_cflags="$cflags"
-    cflags="$cflags "'${optflags} ${debugflags} ${warnflags}'
+    cflags='${hardenflags} '"$cflags "'${optflags} ${debugflags} ${warnflags}'
 ])
 dnl AS_IF([test -z "${CXXFLAGS+set}"], [
 dnl     cxxflags=`echo " $cxxflags " | sed "$cflagspat;s/^ *//;s/ *$//"`
@@ -802,7 +802,7 @@ AS_IF([test "$GCC" = yes], [
 		  [fortify_source=$enableval])
     AS_IF([test "x$fortify_source" != xno], [
         RUBY_TRY_CFLAGS([$optflags -D_FORTIFY_SOURCE=2],
-                        [RUBY_APPEND_OPTION(XCFLAGS, -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2)], [],
+                        [RUBY_PREPEND_OPTION(hardenflags, -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=2)], [],
                         [@%:@include <stdio.h>])
     ])
 
@@ -823,20 +823,24 @@ AS_IF([test "$GCC" = yes], [
     AC_MSG_CHECKING([for -fstack-protector])
     AC_MSG_RESULT(["$stack_protector"])
     AS_CASE(["$stack_protector"], [-*], [
-	RUBY_APPEND_OPTION(XCFLAGS, $stack_protector)
-	RUBY_APPEND_OPTION(XLDFLAGS, $stack_protector)
-	RUBY_APPEND_OPTION(LDFLAGS, $stack_protector)
+        RUBY_PREPEND_OPTION(hardenflags, $stack_protector)
+        RUBY_APPEND_OPTION(XLDFLAGS, $stack_protector)
+        RUBY_APPEND_OPTION(LDFLAGS, $stack_protector)
     ])
 
     # aarch64 branch protection
     AS_CASE(["$target_cpu"], [aarch64], [
 	AS_FOR(option, opt, [-mbranch-protection=pac-ret -msign-return-address=all], [
-            RUBY_TRY_CFLAGS(option, [branch_protection=yes], [branch_protection=no])
+            # Try these flags in the _prepended_ position - i.e. we want to try building a program
+            # with CFLAGS="-mbranch-protection=pac-ret $CFLAGS". If the builder has provided different
+            # branch protection flags in CFLAGS, we don't want to overwrite those. We just want to
+            # find some branch protection flags which work if none were provided.
+            RUBY_TRY_CFLAGS_PREPEND(option, [branch_protection=yes], [branch_protection=no])
             AS_IF([test "x$branch_protection" = xyes], [
-                # C compiler and assembler must be consistent for -mbranch-protection
-                # since they both check `__ARM_FEATURE_PAC_DEFAULT` definition.
-                RUBY_APPEND_OPTION(XCFLAGS, option)
-                RUBY_APPEND_OPTION(ASFLAGS, option)
+                # _prepend_ the options to CFLAGS, so that user-provided flags will overwrite them.
+                # These CFLAGS are used during the configure script to compile further test programs;
+                # however, $harden_flags is prepended separately to CFLAGS at the end of the script.
+                RUBY_PREPEND_OPTION(hardenflags, $opt)
                 break
             ])
         ])
@@ -984,6 +988,59 @@ AC_SUBST(incflags, "$INCFLAGS")
 test -z "${ac_env_CFLAGS_set}" -a -n "${cflags+set}" && eval CFLAGS="\"$cflags $ARCH_FLAG\""
 test -z "${ac_env_CXXFLAGS_set}" -a -n "${cxxflags+set}" && eval CXXFLAGS="\"$cxxflags $ARCH_FLAG\""
 }
+
+# The lines above expand out the $cflags/$optflags/$debugflags/$hardenflags variables into the
+# CFLAGS variable. So, at this point, we have a $CFLAGS var with the actual compiler flags we're
+# going to use.
+# That means this is the right time to check what branch protection flags are going to be in use
+# and define appropriate macros for use in Context.S based on this
+AS_CASE(["$target_cpu"], [aarch64], [
+    AC_CACHE_CHECK([whether __ARM_FEATURE_BTI_DEFAULT is defined],
+        rb_cv_aarch64_bti_enabled,
+        AC_COMPILE_IFELSE(
+            [AC_LANG_PROGRAM([[
+                @%:@ifndef __ARM_FEATURE_BTI_DEFAULT
+                @%:@error "__ARM_FEATURE_BTI_DEFAULT not defined"
+                @%:@endif
+            ]])],
+        [rb_cv_aarch64_bti_enabled=yes],
+        [rb_cv_aarch64_bti_enabled=no])
+    )
+    AS_IF([test "$rb_cv_aarch64_bti_enabled" = yes],
+          AC_DEFINE(RUBY_AARCH64_BTI_ENABLED, 1))
+    AC_CACHE_CHECK([whether __ARM_FEATURE_PAC_DEFAULT is defined],
+        rb_cv_aarch64_pac_enabled,
+        AC_COMPILE_IFELSE(
+            [AC_LANG_PROGRAM([[
+                @%:@ifndef __ARM_FEATURE_PAC_DEFAULT
+                @%:@error "__ARM_FEATURE_PAC_DEFAULT not defined"
+                @%:@endif
+            ]])],
+        [rb_cv_aarch64_pac_enabled=yes],
+        [rb_cv_aarch64_pac_enabled=no])
+    )
+    AS_IF([test "$rb_cv_aarch64_pac_enabled" = yes],
+          AC_DEFINE(RUBY_AARCH64_PAC_ENABLED, 1))
+    # Context.S will only ever sign its return address with the A-key; it doesn't support
+    # the B-key at the moment.
+    AS_IF([test "$rb_cv_aarch64_pac_enabled" = yes], [
+        AC_CACHE_CHECK([whether __ARM_FEATURE_PAC_DEFAULT specifies the b-key bit 0x02],
+            rb_cv_aarch64_pac_b_key,
+            AC_COMPILE_IFELSE(
+                [AC_LANG_PROGRAM([[
+                    @%:@ifdef __ARM_FEATURE_PAC_DEFAULT
+                    @%:@if __ARM_FEATURE_PAC_DEFAULT & 0x02
+                    @%:@error "__ARM_FEATURE_PAC_DEFAULT specifies B key"
+                    @%:@endif
+                    @%:@endif
+                ]])],
+            [rb_cv_aarch64_pac_b_key=no],
+            [rb_cv_aarch64_pac_b_key=yes])
+        )
+        AS_IF([test "$rb_cv_aarch64_pac_b_key" = yes],
+            AC_MSG_ERROR(-mbranch-protection flag specified b-key but Ruby's Context.S does not support this yet.))
+    ])
+])
 
 AC_CACHE_CHECK([whether compiler has statement and declarations in expressions],
   rb_cv_have_stmt_and_decl_in_expr,
@@ -3480,6 +3537,11 @@ AS_IF([test ${multiarch+set}], [
 ])
 
 archlibdir='${libdir}/${arch}'
+AC_ARG_WITH(archlibdir,
+	    AS_HELP_STRING([--with-archlibdir=DIR],
+			   [prefix for libruby [[LIBDIR/ARCH]]]),
+	    [archlibdir="$withval"])
+
 sitearchlibdir='${libdir}/${sitearch}'
 archincludedir='${includedir}/${arch}'
 sitearchincludedir='${includedir}/${sitearch}'
@@ -4208,12 +4270,13 @@ AS_IF([test "${ARCH_FLAG}"], [
 rb_cv_warnflags=`echo "$rb_cv_warnflags" | sed 's/^ *//;s/ *$//'`
 warnflags="$rb_cv_warnflags"
 AC_SUBST(cppflags)dnl
-AC_SUBST(cflags, ["${orig_cflags:+$orig_cflags }"'${optflags} ${debugflags} ${warnflags}'])dnl
+AC_SUBST(cflags, ['${hardenflags} '"${orig_cflags:+$orig_cflags }"' ${optflags} ${debugflags} ${warnflags}'])dnl
 AC_SUBST(cxxflags)dnl
 AC_SUBST(optflags)dnl
 AC_SUBST(debugflags)dnl
 AC_SUBST(warnflags)dnl
 AC_SUBST(strict_warnflags)dnl
+AC_SUBST(hardenflags)dnl
 AC_SUBST(XCFLAGS)dnl
 AC_SUBST(XLDFLAGS)dnl
 AC_SUBST(EXTLDFLAGS)dnl
@@ -4269,9 +4332,6 @@ AS_CASE(["$target_os"],
     rubyw_install_name='$(RUBYW_INSTALL_NAME)'
     ])
 
-rubylibdir='${rubylibprefix}/${ruby_version}'
-rubyarchdir=${multiarch+'${rubyarchprefix}/${ruby_version}'}${multiarch-'${rubylibdir}/${arch}'}
-
 rubyarchprefix=${multiarch+'${archlibdir}/${RUBY_BASE_NAME}'}${multiarch-'${rubylibprefix}/${arch}'}
 AC_ARG_WITH(rubyarchprefix,
 	    AS_HELP_STRING([--with-rubyarchprefix=DIR],
@@ -4294,57 +4354,68 @@ AC_ARG_WITH(ridir,
 AC_SUBST(ridir)
 AC_SUBST(RI_BASE_NAME)
 
-AC_ARG_WITH(ruby-version,
-	    AS_HELP_STRING([--with-ruby-version=STR], [ruby version string for version specific directories [[full]] (full|minor|STR)]),
-            [ruby_version=$withval],
-            [ruby_version=full])
 unset RUBY_LIB_VERSION
-unset RUBY_LIB_VERSION_STYLE
-AS_CASE(["$ruby_version"],
-  [full],  [RUBY_LIB_VERSION_STYLE='3	/* full */'],
-  [minor], [RUBY_LIB_VERSION_STYLE='2	/* minor */'])
-AS_IF([test ${RUBY_LIB_VERSION_STYLE+set}], [
-    {
-    echo "#define RUBY_LIB_VERSION_STYLE $RUBY_LIB_VERSION_STYLE"
-    echo '@%:@include "confdefs.h"'
-    echo '#define STRINGIZE(x) x'
-    test -f revision.h -o -f "${srcdir}/revision.h" || echo '#define RUBY_REVISION 0'
-    echo '#include "version.h"'
-    echo 'ruby_version=RUBY_LIB_VERSION'
-    } > conftest.c
-    ruby_version="`$CPP -I. -I"${srcdir}" -I"${srcdir}/include" conftest.c | sed '/^ruby_version=/!d;s/ //g'`"
-    eval $ruby_version
-], [test -z "${ruby_version}"], [
-    AC_MSG_ERROR([No ruby version, No place for bundled libraries])
-], [
-    RUBY_LIB_VERSION="${ruby_version}"
-])
+RUBY_LIB_VERSION_STYLE='3	/* full */'
+{
+echo "#define RUBY_LIB_VERSION_STYLE $RUBY_LIB_VERSION_STYLE"
+echo '@%:@include "confdefs.h"'
+echo '#define STRINGIZE(x) x'
+test -f revision.h -o -f "${srcdir}/revision.h" || echo '#define RUBY_REVISION 0'
+echo '#include "version.h"'
+echo 'ruby_version=RUBY_LIB_VERSION'
+} > conftest.c
+ruby_version="`$CPP -I. -I"${srcdir}" -I"${srcdir}/include" conftest.c | sed '/^ruby_version=/!d;s/ //g'`"
+eval $ruby_version
+
+RUBY_LIB_VERSION="${ruby_version}"
+
 AC_SUBST(RUBY_LIB_VERSION_STYLE)
 AC_SUBST(RUBY_LIB_VERSION)
+
+AC_ARG_WITH(ruby-version,
+	    AS_HELP_STRING([--with-ruby-version=STR], [ruby version string for version specific directories [[full]] (full|STR)]),
+            [ruby_version_dir_name=$withval],
+            [ruby_version_dir_name=full])
+AS_CASE(["$ruby_version_dir_name"],
+  [full], [ruby_version_dir_name='${ruby_version}'])
+
+ruby_version_dir=/'${ruby_version_dir_name}'
+
+if test -z "${ruby_version_dir_name}"; then
+    unset ruby_version_dir
+    AC_DEFINE(RUBY_LIB_VERSION_BLANK, 1)
+fi
+
+rubylibdir='${rubylibprefix}'${ruby_version_dir}
+rubyarchdir=${multiarch+'${rubyarchprefix}'${ruby_version_dir}}${multiarch-'${rubylibdir}/${arch}'}
 
 AC_ARG_WITH(sitedir,
 	    AS_HELP_STRING([--with-sitedir=DIR], [site libraries in DIR [[RUBY_LIB_PREFIX/site_ruby]], "no" to disable site directory]),
             [sitedir=$withval],
             [sitedir='${rubylibprefix}/site_ruby'])
-sitelibdir='${sitedir}/${ruby_version}'
+sitelibdir='${sitedir}'${ruby_version_dir}
 
 AC_ARG_WITH(sitearchdir,
 	    AS_HELP_STRING([--with-sitearchdir=DIR],
 			   [architecture dependent site libraries in DIR [[SITEDIR/SITEARCH]], "no" to disable site directory]),
             [sitearchdir=$withval],
-            [sitearchdir=${multiarch+'${rubysitearchprefix}/site_ruby/${ruby_version}'}${multiarch-'${sitelibdir}/${sitearch}'}])
+            [sitearchdir=${multiarch+'${rubysitearchprefix}/site_ruby'${ruby_version_dir}}${multiarch-'${sitelibdir}/${sitearch}'}])
 
 AC_ARG_WITH(vendordir,
 	    AS_HELP_STRING([--with-vendordir=DIR], [vendor libraries in DIR [[RUBY_LIB_PREFIX/vendor_ruby]], "no" to disable vendor directory]),
             [vendordir=$withval],
             [vendordir='${rubylibprefix}/vendor_ruby'])
-vendorlibdir='${vendordir}/${ruby_version}'
+vendorlibdir='${vendordir}'${ruby_version_dir}
 
 AC_ARG_WITH(vendorarchdir,
 	    AS_HELP_STRING([--with-vendorarchdir=DIR],
 			   [architecture dependent vendor libraries in DIR [[VENDORDIR/SITEARCH]], "no" to disable vendor directory]),
             [vendorarchdir=$withval],
-            [vendorarchdir=${multiarch+'${rubysitearchprefix}/vendor_ruby/${ruby_version}'}${multiarch-'${vendorlibdir}/${sitearch}'}])
+            [vendorarchdir=${multiarch+'${rubysitearchprefix}/vendor_ruby'${ruby_version_dir}}${multiarch-'${vendorlibdir}/${sitearch}'}])
+
+AC_ARG_WITH(rubygemsdir,
+           AS_HELP_STRING([--with-rubygemsdir=DIR], [custom rubygems directory]),
+            [rubygemsdir=$withval])
 
 AS_IF([test "${LOAD_RELATIVE+set}"], [
     AC_DEFINE_UNQUOTED(LOAD_RELATIVE, $LOAD_RELATIVE)
@@ -4361,6 +4432,7 @@ AC_SUBST(sitearchincludedir)dnl
 AC_SUBST(arch)dnl
 AC_SUBST(sitearch)dnl
 AC_SUBST(ruby_version)dnl
+AC_SUBST(ruby_version_dir_name)dnl
 AC_SUBST(rubylibdir)dnl
 AC_SUBST(rubyarchdir)dnl
 AC_SUBST(sitedir)dnl
@@ -4369,9 +4441,12 @@ AC_SUBST(sitearchdir)dnl
 AC_SUBST(vendordir)dnl
 AC_SUBST(vendorlibdir)dnl
 AC_SUBST(vendorarchdir)dnl
+AC_SUBST(rubygemsdir)dnl
 
 AC_SUBST(CONFIGURE, "`echo $0 | sed 's|.*/||'`")dnl
 AC_SUBST(configure_args, "`echo "${ac_configure_args}" | sed 's/\\$/$$/g'`")dnl
+
+target_cpu=`echo $target_cpu | sed s/i.86/i386/`
 
 AS_IF([test "${universal_binary-no}" = yes ], [
     arch="universal-${target_os}"
@@ -4669,6 +4744,7 @@ config_summary "DLDFLAGS"            "$DLDFLAGS"
 config_summary "optflags"            "$optflags"
 config_summary "debugflags"          "$debugflags"
 config_summary "warnflags"           "$warnflags"
+config_summary "hardenflags"         "$hardenflags"
 config_summary "strip command"       "$STRIP"
 config_summary "install doc"         "$DOCTARGETS"
 config_summary "YJIT support"        "$YJIT_SUPPORT"

@@ -1724,10 +1724,14 @@ proc_options(long argc, char **argv, ruby_cmdline_options_t *opt, int envopt)
 
 void Init_builtin_features(void);
 
+/* abrt.c */
+void Init_abrt(void);
+
 static void
 ruby_init_prelude(void)
 {
     Init_builtin_features();
+    Init_abrt();
     rb_const_remove(rb_cObject, rb_intern_const("TMP_RUBY_PREFIX"));
 }
 
