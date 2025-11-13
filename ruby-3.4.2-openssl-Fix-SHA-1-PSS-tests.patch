@@ -1,0 +1,126 @@
+From 113727fa85749a9625838e378dcd4a749d40b0c5 Mon Sep 17 00:00:00 2001
+From: Jun Aruga <jaruga@redhat.com>
+Date: Tue, 8 Apr 2025 15:03:06 +0200
+Subject: [PATCH] Fix the tests using SHA-1 Probabilistic Signature Scheme
+ (PSS) parameters.
+
+Fedora OpenSSL 3.5 on rawhide stopped accepting SHA-1 PSS[1] parameters.
+This is different from the SHA-1 signatures which Fedora OpenSSL stopped
+accepting since Fedora 41.[2]
+
+This commit fixes the following test failures related to the SHA-1 PSS
+parameters with Fedora OpenSSL 3.5.
+Note these failures are the downstream Fedora OpenSSL RPM specific. The tests
+pass without this commit with the upstream OpenSSL 3.5.
+
+```
+$ rpm -q openssl-libs openssl-devel
+openssl-libs-3.5.0-2.fc43.x86_64
+openssl-devel-3.5.0-2.fc43.x86_64
+
+$ bundle exec rake test
+...
+E
+===============================================================================================
+Error: test_sign_verify_options(OpenSSL::TestPKeyRSA): OpenSSL::PKey::PKeyError: EVP_PKEY_CTX_ctrl_str(ctx, "rsa_mgf1_md", "SHA1"): digest not allowed (digest=SHA1)
+/mnt/git/ruby/openssl/test/openssl/test_pkey_rsa.rb:113:in 'Hash#each'
+/mnt/git/ruby/openssl/test/openssl/test_pkey_rsa.rb:113:in 'OpenSSL::PKey::PKey#sign'
+/mnt/git/ruby/openssl/test/openssl/test_pkey_rsa.rb:113:in 'OpenSSL::TestPKeyRSA#test_sign_verify_options'
+     110:       "rsa_pss_saltlen" => 20,
+     111:       "rsa_mgf1_md" => "SHA1"
+     112:     }
+  => 113:     sig_pss = key.sign("SHA256", data, pssopts)
+     114:     assert_equal 256, sig_pss.bytesize
+     115:     assert_equal true, key.verify("SHA256", sig_pss, data, pssopts)
+     116:     assert_equal true, key.verify_pss("SHA256", sig_pss, data,
+===============================================================================================
+E
+===============================================================================================
+Error: test_sign_verify_pss(OpenSSL::TestPKeyRSA): OpenSSL::PKey::RSAError: digest not allowed (digest=SHA1)
+/mnt/git/ruby/openssl/test/openssl/test_pkey_rsa.rb:191:in 'OpenSSL::PKey::RSA#sign_pss'
+/mnt/git/ruby/openssl/test/openssl/test_pkey_rsa.rb:191:in 'OpenSSL::TestPKeyRSA#test_sign_verify_pss'
+     188:     data = "Sign me!"
+     189:     invalid_data = "Sign me?"
+     190:
+  => 191:     signature = key.sign_pss("SHA256", data, salt_length: 20, mgf1_hash: "SHA1")
+     192:     assert_equal 256, signature.bytesize
+     193:     assert_equal true,
+     194:       key.verify_pss("SHA256", signature, data, salt_length: 20, mgf1_hash: "SHA1")
+===============================================================================================
+...
+577 tests, 4186 assertions, 0 failures, 2 errors, 0 pendings, 3 omissions, 0 notifications
+```
+
+[1] https://en.wikipedia.org/wiki/Probabilistic_signature_scheme
+[2] https://fedoraproject.org/wiki/Changes/OpenSSLDistrustSHA1SigVer
+---
+ test/openssl/test_pkey_rsa.rb | 28 ++++++++++++++--------------
+ 1 file changed, 14 insertions(+), 14 deletions(-)
+
+diff --git a/test/openssl/test_pkey_rsa.rb b/test/openssl/test_pkey_rsa.rb
+index 61c55c60b2..9661cef419 100644
+--- a/test/openssl/test_pkey_rsa.rb
++++ b/test/openssl/test_pkey_rsa.rb
+@@ -99,13 +99,13 @@ def test_sign_verify_options
+     pssopts = {
+       "rsa_padding_mode" => "pss",
+       "rsa_pss_saltlen" => 20,
+-      "rsa_mgf1_md" => "SHA1"
++      "rsa_mgf1_md" => "SHA256"
+     }
+     sig_pss = key.sign("SHA256", data, pssopts)
+     assert_equal 128, sig_pss.bytesize
+     assert_equal true, key.verify("SHA256", sig_pss, data, pssopts)
+     assert_equal true, key.verify_pss("SHA256", sig_pss, data,
+-                                      salt_length: 20, mgf1_hash: "SHA1")
++                                      salt_length: 20, mgf1_hash: "SHA256")
+     # Defaults to PKCS #1 v1.5 padding => verification failure
+     assert_equal false, key.verify("SHA256", sig_pss, data)
+ 
+@@ -179,31 +179,31 @@ def test_sign_verify_pss
+     data = "Sign me!"
+     invalid_data = "Sign me?"
+ 
+-    signature = key.sign_pss("SHA256", data, salt_length: 20, mgf1_hash: "SHA1")
++    signature = key.sign_pss("SHA256", data, salt_length: 20, mgf1_hash: "SHA256")
+     assert_equal 128, signature.bytesize
+     assert_equal true,
+-      key.verify_pss("SHA256", signature, data, salt_length: 20, mgf1_hash: "SHA1")
++      key.verify_pss("SHA256", signature, data, salt_length: 20, mgf1_hash: "SHA256")
+     assert_equal true,
+-      key.verify_pss("SHA256", signature, data, salt_length: :auto, mgf1_hash: "SHA1")
++      key.verify_pss("SHA256", signature, data, salt_length: :auto, mgf1_hash: "SHA256")
+     assert_equal false,
+-      key.verify_pss("SHA256", signature, invalid_data, salt_length: 20, mgf1_hash: "SHA1")
++      key.verify_pss("SHA256", signature, invalid_data, salt_length: 20, mgf1_hash: "SHA256")
+ 
+-    signature = key.sign_pss("SHA256", data, salt_length: :digest, mgf1_hash: "SHA1")
++    signature = key.sign_pss("SHA256", data, salt_length: :digest, mgf1_hash: "SHA256")
+     assert_equal true,
+-      key.verify_pss("SHA256", signature, data, salt_length: 32, mgf1_hash: "SHA1")
++      key.verify_pss("SHA256", signature, data, salt_length: 32, mgf1_hash: "SHA256")
+     assert_equal true,
+-      key.verify_pss("SHA256", signature, data, salt_length: :auto, mgf1_hash: "SHA1")
++      key.verify_pss("SHA256", signature, data, salt_length: :auto, mgf1_hash: "SHA256")
+     assert_equal false,
+-      key.verify_pss("SHA256", signature, data, salt_length: 20, mgf1_hash: "SHA1")
++      key.verify_pss("SHA256", signature, data, salt_length: 20, mgf1_hash: "SHA256")
+ 
+-    signature = key.sign_pss("SHA256", data, salt_length: :max, mgf1_hash: "SHA1")
++    signature = key.sign_pss("SHA256", data, salt_length: :max, mgf1_hash: "SHA256")
+     assert_equal true,
+-      key.verify_pss("SHA256", signature, data, salt_length: 94, mgf1_hash: "SHA1")
++      key.verify_pss("SHA256", signature, data, salt_length: 94, mgf1_hash: "SHA256")
+     assert_equal true,
+-      key.verify_pss("SHA256", signature, data, salt_length: :auto, mgf1_hash: "SHA1")
++      key.verify_pss("SHA256", signature, data, salt_length: :auto, mgf1_hash: "SHA256")
+ 
+     assert_raise(OpenSSL::PKey::RSAError) {
+-      key.sign_pss("SHA256", data, salt_length: 95, mgf1_hash: "SHA1")
++      key.sign_pss("SHA256", data, salt_length: 95, mgf1_hash: "SHA256")
+     }
+   end
+ 
+-- 
+2.48.1
+

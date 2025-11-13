@@ -1,0 +1,61 @@
+From 570582fb78bc4adaafba44f47465507f649fa9dc Mon Sep 17 00:00:00 2001
+From: Jun Aruga <jaruga@redhat.com>
+Date: Thu, 5 Sep 2024 20:06:37 +0200
+Subject: [PATCH] [ruby/openssl] Fix test_provider.rb in FIPS.
+
+https://github.com/ruby/openssl/commit/7bdbc52100
+---
+ test/openssl/test_provider.rb | 25 ++++++++++++++++++-------
+ 1 file changed, 18 insertions(+), 7 deletions(-)
+
+diff --git a/test/openssl/test_provider.rb b/test/openssl/test_provider.rb
+index 4e050b4bc2..e27968602a 100644
+--- a/test/openssl/test_provider.rb
++++ b/test/openssl/test_provider.rb
+@@ -1,6 +1,6 @@
+ # frozen_string_literal: true
+ require_relative 'utils'
+-if defined?(OpenSSL) && defined?(OpenSSL::Provider) && !OpenSSL.fips_mode
++if defined?(OpenSSL) && defined?(OpenSSL::Provider)
+ 
+ class OpenSSL::TestProvider < OpenSSL::TestCase
+   def test_openssl_provider_name_inspect
+@@ -12,14 +12,22 @@ def test_openssl_provider_name_inspect
+ 
+   def test_openssl_provider_names
+     omit 'not working on freebsd RubyCI' if ENV['RUBYCI_NICKNAME'] =~ /freebsd/
++    # We expect the following providers are loaded in the cases:
++    # * Non-FIPS: default
++    # * FIPS: fips, base
++    # Use the null provider to test the added provider.
++    # See provider(7) - OPENSSL PROVIDERS to see the list of providers, and
++    # OSSL_PROVIDER-null(7) to check the details of the null provider.
+     with_openssl <<-'end;'
+-      base_provider = OpenSSL::Provider.load("base")
+-      assert_equal(2, OpenSSL::Provider.provider_names.size)
+-      assert_includes(OpenSSL::Provider.provider_names, "base")
++      num = OpenSSL::Provider.provider_names.size
+ 
+-      assert_equal(true, base_provider.unload)
+-      assert_equal(1, OpenSSL::Provider.provider_names.size)
+-      assert_not_includes(OpenSSL::Provider.provider_names, "base")
++      added_provider = OpenSSL::Provider.load("null")
++      assert_equal(num + 1, OpenSSL::Provider.provider_names.size)
++      assert_includes(OpenSSL::Provider.provider_names, "null")
++
++      assert_equal(true, added_provider.unload)
++      assert_equal(num, OpenSSL::Provider.provider_names.size)
++      assert_not_includes(OpenSSL::Provider.provider_names, "null")
+     end;
+   end
+ 
+@@ -35,6 +43,9 @@ def test_unloaded_openssl_provider
+ 
+   def test_openssl_legacy_provider
+     omit 'not working on freebsd RubyCI' if ENV['RUBYCI_NICKNAME'] =~ /freebsd/
++    # The legacy provider is not supported on FIPS.
++    omit_on_fips
++
+     with_openssl(<<-'end;')
+       begin
+         OpenSSL::Provider.load("legacy")
