@@ -77,7 +77,7 @@ cat rubygems-3.3.1-Fix-compatibility-with-OpenSSL3.0.patch | patch -p1
 # %patch58 -p1
 cat ruby-3.1.0-Miscellaneous-changes-for-OpenSSL-3.0-support-part-2.patch | patch -p1
 # %patch59
-cat ruby-3.1.1-ossl_ocsp-use-null.patch | patch
+cat ruby-3.1.1-ossl_ocsp-use-null.patch | patch -p0
 # %patch60 -p1
 cat ruby-3.1.2-ossl-tests-replace-sha1.patch | patch -p1
 # %patch62 -p1
