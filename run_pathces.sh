@@ -97,7 +97,7 @@ cat ruby-3.4.0-ruby-net-http-Renew-test-certificates.patch | patch -p1
 # %patch72 -p1
 cat ruby-3.2.0-define-unsupported-gc-compaction-methods-as-rb_f_notimplement.patch | patch -p1
 # %patch73 -p1
-cat ruby-3.2.0-define-unsupported-gc-compaction-methods_generated-files.patch | patch -p1
+# cat ruby-3.2.0-define-unsupported-gc-compaction-methods_generated-files.patch | patch -p1
 # %patch74 -p1
 cat ruby-3.2.0-Detect-compaction-support-during-runtime.patch | patch -p1
 # %patch75 -p1
