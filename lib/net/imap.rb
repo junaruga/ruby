@@ -378,8 +378,11 @@ module Net
 
     # Sends a STARTTLS command to start TLS session.
     def starttls(options = {}, verify = true)
-      send_command("STARTTLS") do |resp|
+      handled = false
+      error = nil
+      ok = send_command("STARTTLS") do |resp|
         if resp.kind_of?(TaggedResponse) && resp.name == "OK"
+          handled = true
           begin
             # for backward compatibility
             certs = options.to_str
@@ -388,7 +391,21 @@ module Net
           end
           start_tls_session(options)
         end
+      rescue Exception => error
+        raise # note that the error backtrace is in the receiver_thread
       end
+      if error
+        disconnect
+        raise error
+      end
+      unless handled
+        disconnect
+        raise InvalidResponseError,
+              "STARTTLS handler was bypassed, although server responded %p" % [
+                ok.raw_data.chomp
+              ]
+      end
+      ok
     end
 
     # Sends an AUTHENTICATE command to authenticate the client.
@@ -1267,6 +1284,7 @@ module Net
           put_string(" ")
           send_data(i, tag)
         end
+        guard_against_tagged_response_skipping_handler!(tag)
         put_string(CRLF)
         if cmd == "LOGOUT"
           @logout_command_tag = tag
@@ -1282,6 +1300,17 @@ module Net
           end
         end
       end
+    rescue InvalidResponseError
+      disconnect
+      raise
+    end
+
+    def guard_against_tagged_response_skipping_handler!(tag)
+      return unless (resp = @tagged_responses[tag])&.name&.upcase == "OK"
+      raise(InvalidResponseError,
+            "Server sent tagged 'OK' before command was finished: %p. " \
+            "This could indicate a malicious server or client-side " \
+            "command injection. Disconnecting." % [resp.raw_data.chomp])
     end
 
     def generate_tag
@@ -1320,6 +1349,7 @@ module Net
         end
       when Time
       when Symbol
+        Flag.validate(data)
       else
         data.validate
       end
@@ -1338,7 +1368,7 @@ module Net
       when Time
         send_time_data(data)
       when Symbol
-        send_symbol_data(data)
+        Flag[data].send_data(self, tag)
       else
         data.send_data(self, tag)
       end
@@ -1406,10 +1436,6 @@ module Net
                  t.day, DATE_MONTH[t.month - 1], t.year,
                  t.hour, t.min, t.sec)
       put_string(s)
-    end
-
-    def send_symbol_data(symbol)
-      put_string("\\" + symbol.to_s)
     end
 
     def search_internal(cmd, keys, charset)
@@ -1542,33 +1568,68 @@ module Net
       end
     end
 
-    class RawData # :nodoc:
+    # simplistic emulation of CommandData = Data.define(:data)
+    class CommandData # :nodoc:
+      class << self
+        def new(arg = nil, data: arg) super(data: data) end
+        alias :[] :new
+      end
+
+      def initialize(data:)
+        @data = data
+        freeze
+      end
+
+      attr_reader :data
+
+      def to_h(&block) block ? to_h.to_h(&block) : { data: data } end
+      def ==(other)   self.class === other && to_h  ==  other.to_h  end
+      def eql?(other) self.class === other && to_h.eql?(other.to_h) end
+
+      # following class definition goes beyond the basic Data.define(:data)
+      ##
+
+      def self.validate(...)
+        data = new(...)
+        data.validate
+        data
+      end
+
       def send_data(imap, tag)
-        imap.__send__(:put_string, @data)
+        raise NoMethodError, "#{self.class} must implement #{__method__}"
       end
 
       def validate
-      end
-
-      private
-
-      def initialize(data)
-        @data = data
       end
     end
 
-    class Atom # :nodoc:
+    class RawData < CommandData # :nodoc:
       def send_data(imap, tag)
         imap.__send__(:put_string, @data)
       end
+    end
 
-      def validate
+    class Atom < CommandData # :nodoc:
+      def initialize(**)
+        super
+        validate
       end
 
-      private
+      def validate
+        data.to_s.ascii_only? \
+          or raise DataFormatError, "#{self.class} must be ASCII only"
+        data.match?(ResponseParser::Patterns::ATOM_SPECIALS) \
+          and raise DataFormatError, "#{self.class} must not contain atom-specials"
+      end
 
-      def initialize(data)
-        @data = data
+      def send_data(imap, tag)
+        imap.__send__(:put_string, data.to_s)
+      end
+    end
+
+    class Flag < Atom # :nodoc:
+      def send_data(imap, tag)
+        imap.__send__(:put_string, "\\#{data}")
       end
     end
 
@@ -1587,18 +1648,9 @@ module Net
       end
     end
 
-    class Literal # :nodoc:
+    class Literal < CommandData # :nodoc:
       def send_data(imap, tag)
         imap.__send__(:send_literal, @data, tag)
-      end
-
-      def validate
-      end
-
-      private
-
-      def initialize(data)
-        @data = data
       end
     end
 
@@ -2170,6 +2222,10 @@ module Net
     end
 
     class ResponseParser # :nodoc:
+      module Patterns
+        ATOM_SPECIALS = /[(){ \x00-\x1f\x7f%*"\\\]]/n
+      end
+
       def initialize
         @str = nil
         @pos = nil
@@ -3721,7 +3777,27 @@ module Net
     class ByeResponseError < ResponseError
     end
 
+    # Error raised when the server sends an invalid response.
+    #
+    # This is different from UnknownResponseError: the response has been
+    # rejected.  Although it may be parsable, the server is forbidden from
+    # sending it in the current context.  The client should automatically
+    # disconnect, abruptly (without logout).
+    #
+    # Note that InvalidResponseError does not inherit from ResponseError: it
+    # can be raised before the response is fully parsed.  A related
+    # ResponseParseError or ResponseError may be the #cause.
+    class InvalidResponseError < Error
+    end
+
     # Error raised upon an unknown response from the server.
+    #
+    # This is different from InvalidResponseError: the response may be a
+    # valid extension response and the server may be allowed to send it in
+    # this context, but Net::IMAP either does not know how to parse it or
+    # how to handle it.  This could result from enabling unknown or
+    # unhandled extensions.  The connection may still be usable,
+    # but—depending on context—it may be prudent to disconnect.
     class UnknownResponseError < ResponseError
     end
 

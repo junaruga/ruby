@@ -114,7 +114,7 @@ File.foreach "config.status" do |line|
     val = val.gsub(/\$(?:\$|\{?(\w+)\}?)/) {$1 ? "$(#{$1})" : $&}.dump
     case name
     when /^prefix$/
-      val = "(TOPDIR || DESTDIR + #{val})"
+      val = "(((TOPDIR && TOPDIR.empty?) ? nil : TOPDIR) || DESTDIR + #{val})"
     when /^ARCH_FLAG$/
       val = "arch_flag || #{val}" if universal
     when /^UNIVERSAL_ARCHNAMES$/

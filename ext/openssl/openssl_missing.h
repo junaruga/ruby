@@ -34,34 +34,12 @@ int ossl_EC_curve_nist2nid(const char *);
 #endif
 
 /* added in 1.1.0 */
-#if !defined(HAVE_BN_GENCB_NEW)
-#  define BN_GENCB_new() ((BN_GENCB *)OPENSSL_malloc(sizeof(BN_GENCB)))
-#endif
-
-#if !defined(HAVE_BN_GENCB_FREE)
-#  define BN_GENCB_free(cb) OPENSSL_free(cb)
-#endif
-
-#if !defined(HAVE_BN_GENCB_GET_ARG)
-#  define BN_GENCB_get_arg(cb) (cb)->arg
-#endif
-
 #if !defined(HAVE_EVP_MD_CTX_NEW)
 #  define EVP_MD_CTX_new EVP_MD_CTX_create
 #endif
 
 #if !defined(HAVE_EVP_MD_CTX_FREE)
 #  define EVP_MD_CTX_free EVP_MD_CTX_destroy
-#endif
-
-#if !defined(HAVE_HMAC_CTX_NEW)
-HMAC_CTX *ossl_HMAC_CTX_new(void);
-#  define HMAC_CTX_new ossl_HMAC_CTX_new
-#endif
-
-#if !defined(HAVE_HMAC_CTX_FREE)
-void ossl_HMAC_CTX_free(HMAC_CTX *);
-#  define HMAC_CTX_free ossl_HMAC_CTX_free
 #endif
 
 #if !defined(HAVE_X509_STORE_GET_EX_DATA)
@@ -252,6 +230,27 @@ IMPL_PKEY_GETTER(EC_KEY, ec)
         (ctx)->time_cb = (callback); \
         (ctx)->time_cb_data = (dta); \
     } while (0)
+#endif
+
+/* added in 3.0.0 */
+#if !defined(HAVE_TS_VERIFY_CTX_SET_CERTS)
+#  define TS_VERIFY_CTX_set_certs(ctx, crts) TS_VERIFY_CTS_set_certs(ctx, crts)
+#endif
+
+#ifndef HAVE_EVP_MD_CTX_GET0_MD
+#  define EVP_MD_CTX_get0_md(ctx) EVP_MD_CTX_md(ctx)
+#endif
+
+/*
+ * OpenSSL 1.1.0 added EVP_MD_CTX_pkey_ctx(), and then it was renamed to
+ * EVP_MD_CTX_get_pkey_ctx(x) in OpenSSL 3.0.
+ */
+#ifndef HAVE_EVP_MD_CTX_GET_PKEY_CTX
+# ifdef HAVE_EVP_MD_CTX_PKEY_CTX
+#  define EVP_MD_CTX_get_pkey_ctx(x) EVP_MD_CTX_pkey_ctx(x)
+# else
+#  define EVP_MD_CTX_get_pkey_ctx(x) (x)->pctx
+# endif
 #endif
 
 #endif /* _OSSL_OPENSSL_MISSING_H_ */

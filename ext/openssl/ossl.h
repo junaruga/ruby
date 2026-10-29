@@ -18,22 +18,19 @@
 #include <ruby/io.h>
 #include <ruby/thread.h>
 #include <openssl/opensslv.h>
+
 #include <openssl/err.h>
 #include <openssl/asn1.h>
 #include <openssl/x509v3.h>
 #include <openssl/ssl.h>
 #include <openssl/pkcs12.h>
 #include <openssl/pkcs7.h>
-#include <openssl/hmac.h>
 #include <openssl/rand.h>
 #include <openssl/conf.h>
 #ifndef OPENSSL_NO_TS
   #include <openssl/ts.h>
 #endif
 #include <openssl/crypto.h>
-#if !defined(OPENSSL_NO_ENGINE)
-#  include <openssl/engine.h>
-#endif
 #if !defined(OPENSSL_NO_OCSP)
 #  include <openssl/ocsp.h>
 #endif
@@ -42,6 +39,22 @@
 #include <openssl/dsa.h>
 #include <openssl/evp.h>
 #include <openssl/dh.h>
+
+#ifndef LIBRESSL_VERSION_NUMBER
+# define OSSL_IS_LIBRESSL 0
+# define OSSL_OPENSSL_PREREQ(maj, min, pat) \
+      (OPENSSL_VERSION_NUMBER >= ((maj << 28) | (min << 20) | (pat << 12)))
+# define OSSL_LIBRESSL_PREREQ(maj, min, pat) 0
+#else
+# define OSSL_IS_LIBRESSL 1
+# define OSSL_OPENSSL_PREREQ(maj, min, pat) 0
+# define OSSL_LIBRESSL_PREREQ(maj, min, pat) \
+      (LIBRESSL_VERSION_NUMBER >= ((maj << 28) | (min << 20) | (pat << 12)))
+#endif
+
+#if !defined(OPENSSL_NO_ENGINE) && !OSSL_OPENSSL_PREREQ(3, 0, 0)
+# define OSSL_USE_ENGINE
+#endif
 
 /*
  * Common Module

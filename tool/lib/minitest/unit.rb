@@ -956,9 +956,15 @@ module MiniTest
 
       all_test_methods = suite.send "#{type}_methods"
 
-      filtered_test_methods = all_test_methods.find_all { |m|
-        filter === m || filter === "#{suite}##{m}"
-      }
+      filtered_test_methods = if Regexp === filter
+        all_test_methods.find_all { |m|
+          filter === "#{suite}##{m}"
+        }
+      else
+        all_test_methods.find_all {|m|
+          filter === m || filter === "#{suite}##{m}"
+        }
+      end
 
       leakchecker = LeakChecker.new
 

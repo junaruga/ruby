@@ -4,11 +4,33 @@ require 'fiddle'
 require 'etc'
 
 class TestGCCompact < Test::Unit::TestCase
-  class AutoCompact < Test::Unit::TestCase
+  module CompactionSupportInspector
+    def supports_auto_compact?
+      return true unless defined?(Etc::SC_PAGE_SIZE)
+
+      begin
+        return GC::INTERNAL_CONSTANTS[:HEAP_PAGE_SIZE] % Etc.sysconf(Etc::SC_PAGE_SIZE) == 0
+      rescue NotImplementedError
+      rescue ArgumentError
+      end
+
+      true
+    end
+  end
+
+  module OmitUnlessCompactSupported
+    include CompactionSupportInspector
+
     def setup
-      skip "autocompact not supported on this platform" unless supports_auto_compact?
+      omit "autocompact not supported on this platform" unless supports_auto_compact?
       super
     end
+  end
+
+  include OmitUnlessCompactSupported
+
+  class AutoCompact < Test::Unit::TestCase
+    include OmitUnlessCompactSupported
 
     def test_enable_autocompact
       before = GC.auto_compact
@@ -59,19 +81,36 @@ class TestGCCompact < Test::Unit::TestCase
     ensure
       GC.auto_compact = before
     end
+  end
 
-    private
+  class CompactMethodsNotImplemented < Test::Unit::TestCase
+    include CompactionSupportInspector
 
-    def supports_auto_compact?
-      return true unless defined?(Etc::SC_PAGE_SIZE)
+    def assert_not_implemented(method, *args)
+      omit "autocompact is supported on this platform" if supports_auto_compact?
 
-      begin
-        return GC::INTERNAL_CONSTANTS[:HEAP_PAGE_SIZE] % Etc.sysconf(Etc::SC_PAGE_SIZE) == 0
-      rescue NotImplementedError
-      rescue ArgumentError
-      end
+      assert_raise(NotImplementedError) { GC.send(method, *args) }
+      refute(GC.respond_to?(method), "GC.#{method} should be defined as rb_f_notimplement")
+    end
 
-      true
+    def test_gc_compact_not_implemented
+      assert_not_implemented(:compact)
+    end
+
+    def test_gc_auto_compact_get_not_implemented
+      assert_not_implemented(:auto_compact)
+    end
+
+    def test_gc_auto_compact_set_not_implemented
+      assert_not_implemented(:auto_compact=, true)
+    end
+
+    def test_gc_latest_compact_info_not_implemented
+      assert_not_implemented(:latest_compact_info)
+    end
+
+    def test_gc_verify_compaction_references_not_implemented
+      assert_not_implemented(:verify_compaction_references)
     end
   end
 

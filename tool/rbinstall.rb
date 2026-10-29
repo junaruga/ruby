@@ -349,6 +349,7 @@ if CONFIG["vendordir"]
   vendorlibdir = CONFIG["vendorlibdir"]
   vendorarchlibdir = CONFIG["vendorarchdir"]
 end
+rubygemsdir = CONFIG["rubygemsdir"]
 mandir = CONFIG["mandir", true]
 docdir = CONFIG["docdir", true]
 enable_shared = CONFIG["ENABLE_SHARED"] == 'yes'
@@ -439,7 +440,7 @@ end
 
 install?(:doc, :rdoc) do
   if $rdocdir
-    ridatadir = File.join(CONFIG['ridir'], CONFIG['ruby_version'], "system")
+    ridatadir = File.join(CONFIG['ridir'], CONFIG['ruby_version_dir_name'] || CONFIG['ruby_version'], "system")
     prepare "rdoc", ridatadir
     install_recursive($rdocdir, ridatadir, :no_install => rdoc_noinst, :mode => $data_mode)
   end
@@ -581,7 +582,16 @@ end
 install?(:local, :comm, :lib) do
   prepare "library scripts", rubylibdir
   noinst = %w[*.txt *.rdoc *.gemspec]
+  # Bundler carries "rubygems.rb" file, so it must be specialcased :/
+  noinst += %w[rubygems.rb rubygems/ bundler.rb bundler/] if rubygemsdir
   install_recursive(File.join(srcdir, "lib"), rubylibdir, :no_install => noinst, :mode => $data_mode)
+  if rubygemsdir
+    noinst = %w[*.txt *.rdoc *.gemspec]
+    install_recursive(File.join(srcdir, "lib", "rubygems"), File.join(rubygemsdir, "rubygems"), :no_install => noinst, :mode => $data_mode)
+    install(File.join(srcdir, "lib", "rubygems.rb"), File.join(rubygemsdir, "rubygems.rb"), :mode => $data_mode)
+    install_recursive(File.join(srcdir, "lib", "bundler"), File.join(rubylibdir, "bundler"), :no_install => noinst, :mode => $data_mode)
+    install(File.join(srcdir, "lib", "bundler.rb"), rubylibdir, :mode => $data_mode)
+  end
 end
 
 install?(:local, :comm, :hdr, :'comm-hdr') do

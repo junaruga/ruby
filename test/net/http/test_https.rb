@@ -183,11 +183,11 @@ class TestNetHTTPS < Test::Unit::TestCase
     http.use_ssl = true
     http.cert_store = TEST_STORE
 
-    http.ssl_timeout = -1
+    http.ssl_timeout = 1
     http.start
     http.get("/")
     http.finish
-
+    sleep 1.25
     http.start
     http.get("/")
 

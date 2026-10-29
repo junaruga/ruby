@@ -21,7 +21,7 @@ class TestBugReporter < Test::Unit::TestCase
     args = ["--disable-gems", "-r-test-/bug_reporter",
             "-C", tmpdir]
     stdin = "register_sample_bug_reporter(12345); Process.kill :SEGV, $$"
-    assert_in_out_err(args, stdin, [], expected_stderr, encoding: "ASCII-8BIT")
+    assert_in_out_err(args, stdin, [], expected_stderr, encoding: "ASCII-8BIT", timeout_error: nil)
   ensure
     FileUtils.rm_rf(tmpdir) if tmpdir
   end

@@ -446,7 +446,15 @@ rb_dtrace_setup(rb_execution_context_t *ec, VALUE klass, ID id,
     }
     type = BUILTIN_TYPE(klass);
     if (type == T_CLASS || type == T_ICLASS || type == T_MODULE) {
-	VALUE name = rb_class_path(klass);
+	VALUE name = Qnil;
+	/*
+	 * Special treatment for rb_mRubyVMFrozenCore wchi is broken by GC.
+         * https://bugs.ruby-lang.org/issues/18257
+	 */
+	if (klass == rb_mRubyVMFrozenCore)
+	    name = rb_str_new_cstr("RubyVM::FrozenCore");
+	else
+	    name = rb_class_path(klass);
 	const char *classname, *filename;
 	const char *methodname = rb_id2name(id);
 	if (methodname && (filename = rb_source_location_cstr(&args->line_no)) != 0) {

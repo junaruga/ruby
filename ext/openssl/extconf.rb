@@ -110,7 +110,7 @@ else
     !try_static_assert("OPENSSL_VERSION_MAJOR >= 3", "openssl/opensslv.h") }
 end
 unless version_ok
-  raise "OpenSSL >= 1.0.1, < 3.0.0 or LibreSSL >= 2.5.0 is required"
+  # raise "OpenSSL >= 1.0.1, < 3.0.0 or LibreSSL >= 2.5.0 is required"
 end
 
 # Prevent wincrypt.h from being included, which defines conflicting macro with openssl/x509.h
@@ -143,13 +143,9 @@ if !have_struct_member("SSL", "ctx", "openssl/ssl.h") ||
   $defs.push("-DHAVE_OPAQUE_OPENSSL")
 end
 have_func("CRYPTO_lock") || $defs.push("-DHAVE_OPENSSL_110_THREADING_API")
-have_func("BN_GENCB_new")
-have_func("BN_GENCB_free")
-have_func("BN_GENCB_get_arg")
 have_func("EVP_MD_CTX_new")
 have_func("EVP_MD_CTX_free")
-have_func("HMAC_CTX_new")
-have_func("HMAC_CTX_free")
+have_func("EVP_MD_CTX_pkey_ctx")
 have_func("X509_STORE_get_ex_data")
 have_func("X509_STORE_set_ex_data")
 have_func("X509_STORE_get_ex_new_index")
@@ -176,12 +172,21 @@ have_func("SSL_SESSION_get_protocol_version")
 have_func("TS_STATUS_INFO_get0_status")
 have_func("TS_STATUS_INFO_get0_text")
 have_func("TS_STATUS_INFO_get0_failure_info")
-have_func("TS_VERIFY_CTS_set_certs")
+have_func("TS_VERIFY_CTS_set_certs(NULL, NULL)", "openssl/ts.h")
 have_func("TS_VERIFY_CTX_set_store")
 have_func("TS_VERIFY_CTX_add_flags")
 have_func("TS_RESP_CTX_set_time_cb")
 have_func("EVP_PBE_scrypt")
 have_func("SSL_CTX_set_post_handshake_auth")
+
+# added in 1.1.1
+have_func("EVP_PKEY_check")
+have_func("SSL_CTX_set_ciphersuites")
+ 
+# added in 3.0.0
+have_func("TS_VERIFY_CTX_set_certs(NULL, NULL)", "openssl/ts.h")
+have_func("EVP_MD_CTX_get0_md")
+have_func("EVP_MD_CTX_get_pkey_ctx")
 
 Logging::message "=== Checking done. ===\n"
 

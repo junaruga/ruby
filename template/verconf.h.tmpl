@@ -36,6 +36,9 @@
 % if C["RUBY_SEARCH_PATH"]
 #define RUBY_SEARCH_PATH		"${RUBY_SEARCH_PATH}"
 % end
+% if C["rubygemsdir"]
+#define RUBYGEMS_DIR			"${rubygemsdir}"
+% end
 %
 % R = {}
 % R["ruby_version"] = '"RUBY_LIB_VERSION"'

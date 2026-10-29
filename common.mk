@@ -81,7 +81,8 @@ ENC_MK        = enc.mk
 MAKE_ENC      = -f $(ENC_MK) V="$(V)" UNICODE_HDR_DIR="$(UNICODE_HDR_DIR)" \
 		RUBY="$(MINIRUBY)" MINIRUBY="$(MINIRUBY)" $(mflags)
 
-COMMONOBJS    = array.$(OBJEXT) \
+COMMONOBJS    = abrt.$(OBJEXT) \
+                array.$(OBJEXT) \
 		ast.$(OBJEXT) \
 		bignum.$(OBJEXT) \
 		class.$(OBJEXT) \

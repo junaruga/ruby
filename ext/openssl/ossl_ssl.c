@@ -1025,6 +1025,29 @@ ossl_sslctx_get_ciphers(VALUE self)
     return ary;
 }
 
+static VALUE
+build_cipher_string(VALUE v)
+{
+    VALUE str, elem;
+    int i;
+
+    if (RB_TYPE_P(v, T_ARRAY)) {
+        str = rb_str_new(0, 0);
+        for (i = 0; i < RARRAY_LEN(v); i++) {
+            elem = rb_ary_entry(v, i);
+            if (RB_TYPE_P(elem, T_ARRAY)) elem = rb_ary_entry(elem, 0);
+            elem = rb_String(elem);
+            rb_str_append(str, elem);
+            if (i < RARRAY_LEN(v)-1) rb_str_cat2(str, ":");
+        }
+    } else {
+        str = v;
+        StringValue(str);
+    }
+
+    return str;
+}
+
 /*
  * call-seq:
  *    ctx.ciphers = "cipher1:cipher2:..."
@@ -1039,33 +1062,49 @@ static VALUE
 ossl_sslctx_set_ciphers(VALUE self, VALUE v)
 {
     SSL_CTX *ctx;
-    VALUE str, elem;
-    int i;
+    VALUE str;
 
     rb_check_frozen(self);
     if (NIL_P(v))
-	return v;
-    else if (RB_TYPE_P(v, T_ARRAY)) {
-        str = rb_str_new(0, 0);
-        for (i = 0; i < RARRAY_LEN(v); i++) {
-            elem = rb_ary_entry(v, i);
-            if (RB_TYPE_P(elem, T_ARRAY)) elem = rb_ary_entry(elem, 0);
-            elem = rb_String(elem);
-            rb_str_append(str, elem);
-            if (i < RARRAY_LEN(v)-1) rb_str_cat2(str, ":");
-        }
-    } else {
-        str = v;
-        StringValue(str);
-    }
+        return v;
+
+    str = build_cipher_string(v);
 
     GetSSLCTX(self, ctx);
-    if (!SSL_CTX_set_cipher_list(ctx, StringValueCStr(str))) {
+    if (!SSL_CTX_set_cipher_list(ctx, StringValueCStr(str)))
         ossl_raise(eSSLError, "SSL_CTX_set_cipher_list");
-    }
 
     return v;
 }
+
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
+/*
+ * call-seq:
+ *    ctx.ciphersuites = "cipher1:cipher2:..."
+ *    ctx.ciphersuites = [name, ...]
+ *    ctx.ciphersuites = [[name, version, bits, alg_bits], ...]
+ *
+ * Sets the list of available TLSv1.3 cipher suites for this context.
+ */
+static VALUE
+ossl_sslctx_set_ciphersuites(VALUE self, VALUE v)
+{
+    SSL_CTX *ctx;
+    VALUE str;
+
+    rb_check_frozen(self);
+    if (NIL_P(v))
+        return v;
+
+    str = build_cipher_string(v);
+
+    GetSSLCTX(self, ctx);
+    if (!SSL_CTX_set_ciphersuites(ctx, StringValueCStr(str)))
+        ossl_raise(eSSLError, "SSL_CTX_set_ciphersuites");
+
+    return v;
+}
+#endif
 
 #if !defined(OPENSSL_NO_EC)
 /*
@@ -1535,8 +1574,8 @@ ossl_sslctx_flush_sessions(int argc, VALUE *argv, VALUE self)
 static inline int
 ssl_started(SSL *ssl)
 {
-    /* the FD is set in ossl_ssl_setup(), called by #connect or #accept */
-    return SSL_get_fd(ssl) >= 0;
+    /* BIO is created through ossl_ssl_setup(), called by #connect or #accept */
+    return SSL_get_rbio(ssl) != NULL;
 }
 
 static void
@@ -2818,6 +2857,9 @@ Init_ossl_ssl(void)
 			     ossl_sslctx_set_minmax_proto_version, 2);
     rb_define_method(cSSLContext, "ciphers",     ossl_sslctx_get_ciphers, 0);
     rb_define_method(cSSLContext, "ciphers=",    ossl_sslctx_set_ciphers, 1);
+#ifdef HAVE_SSL_CTX_SET_CIPHERSUITES
+    rb_define_method(cSSLContext, "ciphersuites=", ossl_sslctx_set_ciphersuites, 1);
+#endif
     rb_define_method(cSSLContext, "ecdh_curves=", ossl_sslctx_set_ecdh_curves, 1);
     rb_define_method(cSSLContext, "security_level", ossl_sslctx_get_security_level, 0);
     rb_define_method(cSSLContext, "security_level=", ossl_sslctx_set_security_level, 1);
@@ -2941,12 +2983,27 @@ Init_ossl_ssl(void)
     rb_define_const(mSSL, "VERIFY_CLIENT_ONCE", INT2NUM(SSL_VERIFY_CLIENT_ONCE));
 
     rb_define_const(mSSL, "OP_ALL", ULONG2NUM(SSL_OP_ALL));
+#ifdef SSL_OP_CLEANSE_PLAINTEXT /* OpenSSL 3.0 */
+    rb_define_const(mSSL, "OP_CLEANSE_PLAINTEXT", ULONG2NUM(SSL_OP_CLEANSE_PLAINTEXT));
+#endif
     rb_define_const(mSSL, "OP_LEGACY_SERVER_CONNECT", ULONG2NUM(SSL_OP_LEGACY_SERVER_CONNECT));
+#ifdef SSL_OP_ENABLE_KTLS /* OpenSSL 3.0 */
+    rb_define_const(mSSL, "OP_ENABLE_KTLS", ULONG2NUM(SSL_OP_ENABLE_KTLS));
+#endif
 #ifdef SSL_OP_TLSEXT_PADDING /* OpenSSL 1.0.1h and OpenSSL 1.0.2 */
     rb_define_const(mSSL, "OP_TLSEXT_PADDING", ULONG2NUM(SSL_OP_TLSEXT_PADDING));
 #endif
 #ifdef SSL_OP_SAFARI_ECDHE_ECDSA_BUG /* OpenSSL 1.0.1f and OpenSSL 1.0.2 */
     rb_define_const(mSSL, "OP_SAFARI_ECDHE_ECDSA_BUG", ULONG2NUM(SSL_OP_SAFARI_ECDHE_ECDSA_BUG));
+#endif
+#ifdef SSL_OP_IGNORE_UNEXPECTED_EOF /* OpenSSL 3.0 */
+    rb_define_const(mSSL, "OP_IGNORE_UNEXPECTED_EOF", ULONG2NUM(SSL_OP_IGNORE_UNEXPECTED_EOF));
+#endif
+#ifdef SSL_OP_ALLOW_CLIENT_RENEGOTIATION /* OpenSSL 3.0 */
+    rb_define_const(mSSL, "OP_ALLOW_CLIENT_RENEGOTIATION", ULONG2NUM(SSL_OP_ALLOW_CLIENT_RENEGOTIATION));
+#endif
+#ifdef SSL_OP_DISABLE_TLSEXT_CA_NAMES /* OpenSSL 3.0 */
+    rb_define_const(mSSL, "OP_DISABLE_TLSEXT_CA_NAMES", ULONG2NUM(SSL_OP_DISABLE_TLSEXT_CA_NAMES));
 #endif
 #ifdef SSL_OP_ALLOW_NO_DHE_KEX /* OpenSSL 1.1.1 */
     rb_define_const(mSSL, "OP_ALLOW_NO_DHE_KEX", ULONG2NUM(SSL_OP_ALLOW_NO_DHE_KEX));
@@ -2959,13 +3016,15 @@ Init_ossl_ssl(void)
 #ifdef SSL_OP_NO_ENCRYPT_THEN_MAC /* OpenSSL 1.1.1 */
     rb_define_const(mSSL, "OP_NO_ENCRYPT_THEN_MAC", ULONG2NUM(SSL_OP_NO_ENCRYPT_THEN_MAC));
 #endif
-    rb_define_const(mSSL, "OP_CIPHER_SERVER_PREFERENCE", ULONG2NUM(SSL_OP_CIPHER_SERVER_PREFERENCE));
-    rb_define_const(mSSL, "OP_TLS_ROLLBACK_BUG", ULONG2NUM(SSL_OP_TLS_ROLLBACK_BUG));
-#ifdef SSL_OP_NO_RENEGOTIATION /* OpenSSL 1.1.1 */
-    rb_define_const(mSSL, "OP_NO_RENEGOTIATION", ULONG2NUM(SSL_OP_NO_RENEGOTIATION));
+#ifdef SSL_OP_ENABLE_MIDDLEBOX_COMPAT /* OpenSSL 1.1.1 */
+    rb_define_const(mSSL, "OP_ENABLE_MIDDLEBOX_COMPAT", ULONG2NUM(SSL_OP_ENABLE_MIDDLEBOX_COMPAT));
 #endif
-    rb_define_const(mSSL, "OP_CRYPTOPRO_TLSEXT_BUG", ULONG2NUM(SSL_OP_CRYPTOPRO_TLSEXT_BUG));
-
+#ifdef SSL_OP_PRIORITIZE_CHACHA /* OpenSSL 1.1.1 */
+    rb_define_const(mSSL, "OP_PRIORITIZE_CHACHA", ULONG2NUM(SSL_OP_PRIORITIZE_CHACHA));
+#endif
+#ifdef SSL_OP_NO_ANTI_REPLAY /* OpenSSL 1.1.1 */
+    rb_define_const(mSSL, "OP_NO_ANTI_REPLAY", ULONG2NUM(SSL_OP_NO_ANTI_REPLAY));
+#endif
     rb_define_const(mSSL, "OP_NO_SSLv3", ULONG2NUM(SSL_OP_NO_SSLv3));
     rb_define_const(mSSL, "OP_NO_TLSv1", ULONG2NUM(SSL_OP_NO_TLSv1));
     rb_define_const(mSSL, "OP_NO_TLSv1_1", ULONG2NUM(SSL_OP_NO_TLSv1_1));
@@ -2973,6 +3032,12 @@ Init_ossl_ssl(void)
 #ifdef SSL_OP_NO_TLSv1_3 /* OpenSSL 1.1.1 */
     rb_define_const(mSSL, "OP_NO_TLSv1_3", ULONG2NUM(SSL_OP_NO_TLSv1_3));
 #endif
+    rb_define_const(mSSL, "OP_CIPHER_SERVER_PREFERENCE", ULONG2NUM(SSL_OP_CIPHER_SERVER_PREFERENCE));
+    rb_define_const(mSSL, "OP_TLS_ROLLBACK_BUG", ULONG2NUM(SSL_OP_TLS_ROLLBACK_BUG));
+#ifdef SSL_OP_NO_RENEGOTIATION /* OpenSSL 1.1.1 */
+    rb_define_const(mSSL, "OP_NO_RENEGOTIATION", ULONG2NUM(SSL_OP_NO_RENEGOTIATION));
+#endif
+    rb_define_const(mSSL, "OP_CRYPTOPRO_TLSEXT_BUG", ULONG2NUM(SSL_OP_CRYPTOPRO_TLSEXT_BUG));
 
     /* SSL_OP_* flags for DTLS */
 #if 0

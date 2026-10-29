@@ -32,6 +32,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+/* MALLOC_HEADERS_BEGIN */
 #ifndef HAVE_MALLOC_USABLE_SIZE
 # ifdef _WIN32
 #  define HAVE_MALLOC_USABLE_SIZE
@@ -53,6 +54,12 @@
 #  include <malloc/malloc.h>
 # endif
 #endif
+
+#if !defined(PAGE_SIZE) && defined(HAVE_SYS_USER_H)
+/* LIST_HEAD conflicts with sys/queue.h on macOS */
+# include <sys/user.h>
+#endif
+/* MALLOC_HEADERS_END */
 
 #ifdef HAVE_SYS_TIME_H
 # include <sys/time.h>
@@ -821,6 +828,25 @@ enum {
     HEAP_PAGE_BITMAP_SIZE = (BITS_SIZE * HEAP_PAGE_BITMAP_LIMIT),
     HEAP_PAGE_BITMAP_PLANES = 4 /* RGENGC: mark, unprotected, uncollectible, marking */
 };
+#define HEAP_PAGE_ALIGN (1 << HEAP_PAGE_ALIGN_LOG)
+#define HEAP_PAGE_SIZE HEAP_PAGE_ALIGN
+
+#ifdef HAVE_MMAP
+# if HAVE_CONST_PAGE_SIZE
+/* If we have the HEAP_PAGE and it is a constant, then we can directly use it. */
+static const bool USE_MMAP_ALIGNED_ALLOC = (PAGE_SIZE <= HEAP_PAGE_SIZE);
+# elif defined(PAGE_MAX_SIZE) && (PAGE_MAX_SIZE <= HEAP_PAGE_SIZE)
+/* PAGE_SIZE <= HEAP_PAGE_SIZE */
+static const bool USE_MMAP_ALIGNED_ALLOC = true;
+# else
+/* Otherwise, fall back to determining if we can use mmap during runtime. */
+#  define USE_MMAP_ALIGNED_ALLOC (use_mmap_aligned_alloc != false)
+
+static bool use_mmap_aligned_alloc;
+# endif
+#elif !defined(__MINGW32__) && !defined(_WIN32)
+static const bool USE_MMAP_ALIGNED_ALLOC = false;
+#endif
 
 struct heap_page {
     short total_slots;
@@ -1760,14 +1786,14 @@ heap_unlink_page(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *pag
     heap->total_slots -= page->total_slots;
 }
 
-static void rb_aligned_free(void *ptr);
+static void rb_aligned_free(void *ptr, size_t size);
 
 static void
 heap_page_free(rb_objspace_t *objspace, struct heap_page *page)
 {
     heap_allocated_pages--;
     objspace->profile.total_freed_pages++;
-    rb_aligned_free(GET_PAGE_BODY(page->start));
+    rb_aligned_free(GET_PAGE_BODY(page->start), HEAP_PAGE_SIZE);
     free(page);
 }
 
@@ -1819,7 +1845,7 @@ heap_page_allocate(rb_objspace_t *objspace)
     /* assign heap_page entry */
     page = calloc1(sizeof(struct heap_page));
     if (page == 0) {
-        rb_aligned_free(page_body);
+        rb_aligned_free(page_body, HEAP_PAGE_SIZE);
 	rb_memerror();
     }
 
@@ -3159,15 +3185,18 @@ Init_heap(void)
 {
     rb_objspace_t *objspace = &rb_objspace;
 
-#if defined(HAVE_SYSCONF) && defined(_SC_PAGE_SIZE)
-    /* If Ruby's heap pages are not a multiple of the system page size, we
-     * cannot use mprotect for the read barrier, so we must disable automatic
-     * compaction. */
-    int pagesize;
-    pagesize = (int)sysconf(_SC_PAGE_SIZE);
-    if ((HEAP_PAGE_SIZE % pagesize) != 0) {
-        ruby_enable_autocompact = 0;
-    }
+#if defined(HAVE_MMAP) && !HAVE_CONST_PAGE_SIZE && !defined(PAGE_MAX_SIZE)
+    /* Need to determine if we can use mmap at runtime. */
+# ifdef PAGE_SIZE
+    /* If the PAGE_SIZE macro can be used. */
+    use_mmap_aligned_alloc = PAGE_SIZE <= HEAP_PAGE_SIZE;
+# elif defined(HAVE_SYSCONF) && defined(_SC_PAGE_SIZE)
+    /* If we can use sysconf to determine the page size. */
+    use_mmap_aligned_alloc = sysconf(_SC_PAGE_SIZE) <= HEAP_PAGE_SIZE;
+# else
+    /* Otherwise we can't determine the system page size, so don't use mmap. */
+    use_mmap_aligned_alloc = FALSE;
+# endif
 #endif
 
     objspace->next_object_id = INT2FIX(OBJ_ID_INITIAL);
@@ -4603,7 +4632,25 @@ gc_unprotect_pages(rb_objspace_t *objspace, rb_heap_t *heap)
 static void gc_update_references(rb_objspace_t * objspace, rb_heap_t *heap);
 static void invalidate_moved_page(rb_objspace_t *objspace, struct heap_page *page);
 
-static void read_barrier_handler(intptr_t address)
+#ifndef GC_CAN_COMPILE_COMPACTION
+#if defined(__wasi__) /* WebAssembly doesn't support signals */
+# define GC_CAN_COMPILE_COMPACTION 0
+#else
+# define GC_CAN_COMPILE_COMPACTION 1
+#endif
+#endif
+
+#if defined(__MINGW32__) || defined(_WIN32)
+# define GC_COMPACTION_SUPPORTED 1
+#else
+/* If not MinGW, Windows, or does not have mmap, we cannot use mprotect for
+ * the read barrier, so we must disable compaction. */
+# define GC_COMPACTION_SUPPORTED (GC_CAN_COMPILE_COMPACTION && USE_MMAP_ALIGNED_ALLOC)
+#endif
+
+#if GC_CAN_COMPILE_COMPACTION
+static void
+read_barrier_handler(uintptr_t address)
 {
     VALUE obj;
     rb_objspace_t * objspace = &rb_objspace;
@@ -4622,6 +4669,7 @@ static void read_barrier_handler(intptr_t address)
     }
     RB_VM_LOCK_LEAVE();
 }
+#endif
 
 #if defined(_WIN32)
 static LPTOP_LEVEL_EXCEPTION_FILTER old_handler;
@@ -8533,6 +8581,16 @@ gc_start_internal(rb_execution_context_t *ec, VALUE self, VALUE full_mark, VALUE
 
     /* For now, compact implies full mark / sweep, so ignore other flags */
     if (RTEST(compact)) {
+        GC_ASSERT(GC_COMPACTION_SUPPORTED);
+
+        /* If not MinGW, Windows, or does not have mmap, we cannot use mprotect for
+         * the read barrier, so we must disable compaction. */
+#if !defined(__MINGW32__) && !defined(_WIN32)
+        if (!USE_MMAP_ALIGNED_ALLOC) {
+            rb_raise(rb_eNotImpError, "Compaction isn't available on this platform");
+        }
+#endif
+
         reason |= GPR_FLAG_COMPACT;
     } else {
         if (!RTEST(full_mark))       reason &= ~GPR_FLAG_FULL_MARK;
@@ -8695,6 +8753,7 @@ gc_move(rb_objspace_t *objspace, VALUE scan, VALUE free)
     return (VALUE)src;
 }
 
+#if GC_CAN_COMPILE_COMPACTION
 static int
 compare_free_slots(const void *left, const void *right, void *dummy)
 {
@@ -8738,6 +8797,7 @@ gc_sort_heap_by_empty_slots(rb_objspace_t *objspace)
 
     free(page_list);
 }
+#endif
 
 static void
 gc_ref_update_array(rb_objspace_t * objspace, VALUE v)
@@ -9373,8 +9433,21 @@ gc_update_references(rb_objspace_t * objspace, rb_heap_t *heap)
 
 static VALUE type_sym(size_t type);
 
+#if GC_CAN_COMPILE_COMPACTION
+/*
+ *  call-seq:
+ *     GC.latest_compact_info -> {:considered=>{:T_CLASS=>11}, :moved=>{:T_CLASS=>11}}
+ *
+ *  Returns information about object moved in the most recent GC compaction.
+ *
+ * The returned hash has two keys :considered and :moved.  The hash for
+ * :considered lists the number of objects that were considered for movement
+ * by the compactor, and the :moved hash lists the number of objects that
+ * were actually moved.  Some objects can't be moved (maybe they were pinned)
+ * so these numbers can be used to calculate compaction efficiency.
+ */
 static VALUE
-gc_compact_stats(rb_execution_context_t *ec, VALUE self)
+gc_compact_stats(VALUE self)
 {
     size_t i;
     rb_objspace_t *objspace = &rb_objspace;
@@ -9397,7 +9470,11 @@ gc_compact_stats(rb_execution_context_t *ec, VALUE self)
 
     return h;
 }
+#else
+#  define gc_compact_stats rb_f_notimplement
+#endif
 
+#if GC_CAN_COMPILE_COMPACTION
 static void
 root_obj_check_moved_i(const char *category, VALUE obj, void *data)
 {
@@ -9447,22 +9524,78 @@ heap_check_moved_i(void *vstart, void *vend, size_t stride, void *data)
     return 0;
 }
 
+/*
+ *  call-seq:
+ *     GC.compact
+ *
+ * This function compacts objects together in Ruby's heap.  It eliminates
+ * unused space (or fragmentation) in the heap by moving objects in to that
+ * unused space.  This function returns a hash which contains statistics about
+ * which objects were moved.  See `GC.latest_gc_info` for details about
+ * compaction statistics.
+ *
+ * This method is implementation specific and not expected to be implemented
+ * in any implementation besides MRI.
+ *
+ * To test whether GC compaction is supported, use the idiom:
+ *
+ *   GC.respond_to?(:compact)
+ */
 static VALUE
-gc_compact(rb_execution_context_t *ec, VALUE self)
+gc_compact(VALUE self)
 {
     /* Run GC with compaction enabled */
-    gc_start_internal(ec, self, Qtrue, Qtrue, Qtrue, Qtrue);
+    gc_start_internal(NULL, self, Qtrue, Qtrue, Qtrue, Qtrue);
 
-    return gc_compact_stats(ec, self);
+    return gc_compact_stats(self);
 }
+#else
+#  define gc_compact rb_f_notimplement
+#endif
 
+#if GC_CAN_COMPILE_COMPACTION
+/*
+ * call-seq:
+ *    GC.verify_compaction_references(toward: nil, double_heap: false) -> hash
+ *
+ * Verify compaction reference consistency.
+ *
+ * This method is implementation specific.  During compaction, objects that
+ * were moved are replaced with T_MOVED objects.  No object should have a
+ * reference to a T_MOVED object after compaction.
+ *
+ * This function doubles the heap to ensure room to move all objects,
+ * compacts the heap to make sure everything moves, updates all references,
+ * then performs a full GC.  If any object contains a reference to a T_MOVED
+ * object, that object should be pushed on the mark stack, and will
+ * make a SEGV.
+ */
 static VALUE
-gc_verify_compaction_references(rb_execution_context_t *ec, VALUE self, VALUE double_heap, VALUE toward_empty)
+gc_verify_compaction_references(int argc, VALUE *argv, VALUE self)
 {
     rb_objspace_t *objspace = &rb_objspace;
+    VALUE kwargs, double_heap = Qfalse, toward_empty = Qfalse;
+    static ID id_toward, id_double_heap, id_empty;
+
+    if (!id_toward) {
+        id_toward = rb_intern("toward");
+        id_double_heap = rb_intern("double_heap");
+        id_empty = rb_intern("empty");
+    }
+
+    rb_scan_args(argc, argv, ":", &kwargs);
+    if (!NIL_P(kwargs)) {
+        if (rb_hash_has_key(kwargs, ID2SYM(id_toward))) {
+            VALUE toward = rb_hash_aref(kwargs, ID2SYM(id_toward));
+            toward_empty = (toward == ID2SYM(id_empty)) ? Qtrue : Qfalse;
+        }
+        if (rb_hash_has_key(kwargs, ID2SYM(id_double_heap))) {
+            double_heap = rb_hash_aref(kwargs, ID2SYM(id_double_heap));
+        }
+    }
 
     /* Clear the heap. */
-    gc_start_internal(ec, self, Qtrue, Qtrue, Qtrue, Qfalse);
+    gc_start_internal(NULL, self, Qtrue, Qtrue, Qtrue, Qfalse);
 
     RB_VM_LOCK_ENTER();
     {
@@ -9478,13 +9611,16 @@ gc_verify_compaction_references(rb_execution_context_t *ec, VALUE self, VALUE do
     }
     RB_VM_LOCK_LEAVE();
 
-    gc_start_internal(ec, self, Qtrue, Qtrue, Qtrue, Qtrue);
+    gc_start_internal(NULL, self, Qtrue, Qtrue, Qtrue, Qtrue);
 
     objspace_reachable_objects_from_root(objspace, root_obj_check_moved_i, NULL);
     objspace_each_objects(objspace, heap_check_moved_i, NULL);
 
-    return gc_compact_stats(ec, self);
+    return gc_compact_stats(self);
 }
+#else
+#  define gc_verify_compaction_references rb_f_notimplement
+#endif
 
 VALUE
 rb_gc_start(void)
@@ -9941,28 +10077,52 @@ gc_disable(rb_execution_context_t *ec, VALUE _)
     return rb_gc_disable();
 }
 
+#if GC_CAN_COMPILE_COMPACTION
+/*
+ *  call-seq:
+ *     GC.auto_compact = flag
+ *
+ *  Updates automatic compaction mode.
+ *
+ *  When enabled, the compactor will execute on every major collection.
+ *
+ *  Enabling compaction will degrade performance on major collections.
+ */
 static VALUE
-gc_set_auto_compact(rb_execution_context_t *ec, VALUE _, VALUE v)
+gc_set_auto_compact(VALUE _, VALUE v)
 {
-#if defined(HAVE_SYSCONF) && defined(_SC_PAGE_SIZE)
-    /* If Ruby's heap pages are not a multiple of the system page size, we
-     * cannot use mprotect for the read barrier, so we must disable automatic
-     * compaction. */
-    int pagesize;
-    pagesize = (int)sysconf(_SC_PAGE_SIZE);
-    if ((HEAP_PAGE_SIZE % pagesize) != 0) {
+    /* If not MinGW, Windows, or does not have mmap, we cannot use mprotect for
+     * the read barrier, so we must disable automatic compaction. */
+#if !defined(__MINGW32__) && !defined(_WIN32)
+    if (!USE_MMAP_ALIGNED_ALLOC) {
         rb_raise(rb_eNotImpError, "Automatic compaction isn't available on this platform");
     }
 #endif
+    GC_ASSERT(GC_COMPACTION_SUPPORTED);
+
     ruby_enable_autocompact = RTEST(v);
     return v;
 }
+#else
+#  define gc_set_auto_compact rb_f_notimplement
+#endif
 
+
+#if GC_CAN_COMPILE_COMPACTION
+/*
+ *  call-seq:
+ *     GC.auto_compact    -> true or false
+ *
+ *  Returns whether or not automatic compaction has been enabled.
+ */
 static VALUE
-gc_get_auto_compact(rb_execution_context_t *ec, VALUE _)
+gc_get_auto_compact(VALUE _)
 {
     return ruby_enable_autocompact ? Qtrue : Qfalse;
 }
+#else
+#  define gc_get_auto_compact rb_f_notimplement
+#endif
 
 static int
 get_envparam_size(const char *name, size_t *default_value, size_t lower_bound)
@@ -10350,22 +10510,54 @@ rb_aligned_malloc(size_t alignment, size_t size)
 #elif defined _WIN32
     void *_aligned_malloc(size_t, size_t);
     res = _aligned_malloc(size, alignment);
-#elif defined(HAVE_POSIX_MEMALIGN)
-    if (posix_memalign(&res, alignment, size) == 0) {
-        return res;
+#else
+    if (USE_MMAP_ALIGNED_ALLOC) {
+        GC_ASSERT(alignment % sysconf(_SC_PAGE_SIZE) == 0);
+
+        char *ptr = mmap(NULL, alignment + size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (ptr == MAP_FAILED) {
+            return NULL;
+        }
+
+        char *aligned = ptr + alignment;
+        aligned -= ((VALUE)aligned & (alignment - 1));
+        GC_ASSERT(aligned > ptr);
+        GC_ASSERT(aligned <= ptr + alignment);
+
+        size_t start_out_of_range_size = aligned - ptr;
+        GC_ASSERT(start_out_of_range_size % sysconf(_SC_PAGE_SIZE) == 0);
+        if (start_out_of_range_size > 0) {
+            if (munmap(ptr, start_out_of_range_size)) {
+                rb_bug("rb_aligned_malloc: munmap failed for start");
+            }
+        }
+
+        size_t end_out_of_range_size = alignment - start_out_of_range_size;
+        GC_ASSERT(end_out_of_range_size % sysconf(_SC_PAGE_SIZE) == 0);
+        if (end_out_of_range_size > 0) {
+            if (munmap(aligned + size, end_out_of_range_size)) {
+                rb_bug("rb_aligned_malloc: munmap failed for end");
+            }
+        }
+
+        res = (void *)aligned;
     }
     else {
-        return NULL;
+# if defined(HAVE_POSIX_MEMALIGN)
+        if (posix_memalign(&res, alignment, size) != 0) {
+            return NULL;
+        }
+# elif defined(HAVE_MEMALIGN)
+        res = memalign(alignment, size);
+# else
+        char* aligned;
+        res = malloc(alignment + size + sizeof(void*));
+        aligned = (char*)res + alignment + sizeof(void*);
+        aligned -= ((VALUE)aligned & (alignment - 1));
+        ((void**)aligned)[-1] = res;
+        res = (void*)aligned;
+# endif
     }
-#elif defined(HAVE_MEMALIGN)
-    res = memalign(alignment, size);
-#else
-    char* aligned;
-    res = malloc(alignment + size + sizeof(void*));
-    aligned = (char*)res + alignment + sizeof(void*);
-    aligned -= ((VALUE)aligned & (alignment - 1));
-    ((void**)aligned)[-1] = res;
-    res = (void*)aligned;
 #endif
 
     /* alignment must be a power of 2 */
@@ -10375,16 +10567,26 @@ rb_aligned_malloc(size_t alignment, size_t size)
 }
 
 static void
-rb_aligned_free(void *ptr)
+rb_aligned_free(void *ptr, size_t size)
 {
 #if defined __MINGW32__
     __mingw_aligned_free(ptr);
 #elif defined _WIN32
     _aligned_free(ptr);
-#elif defined(HAVE_MEMALIGN) || defined(HAVE_POSIX_MEMALIGN)
-    free(ptr);
 #else
-    free(((void**)ptr)[-1]);
+    if (USE_MMAP_ALIGNED_ALLOC) {
+        GC_ASSERT(size % sysconf(_SC_PAGE_SIZE) == 0);
+        if (munmap(ptr, size)) {
+            rb_bug("rb_aligned_free: munmap failed");
+        }
+    }
+    else {
+# if defined(HAVE_POSIX_MEMALIGN) || defined(HAVE_MEMALIGN)
+        free(ptr);
+# else
+        free(((void**)ptr)[-1]);
+# endif
+    }
 #endif
 }
 
@@ -12747,6 +12949,21 @@ Init_GC(void)
     rb_define_singleton_method(rb_mGC, "malloc_allocated_size", gc_malloc_allocated_size, 0);
     rb_define_singleton_method(rb_mGC, "malloc_allocations", gc_malloc_allocations, 0);
 #endif
+    if (GC_COMPACTION_SUPPORTED) {
+        rb_define_singleton_method(rb_mGC, "compact", gc_compact, 0);
+        rb_define_singleton_method(rb_mGC, "auto_compact", gc_get_auto_compact, 0);
+        rb_define_singleton_method(rb_mGC, "auto_compact=", gc_set_auto_compact, 1);
+        rb_define_singleton_method(rb_mGC, "latest_compact_info", gc_compact_stats, 0);
+        rb_define_singleton_method(rb_mGC, "verify_compaction_references", gc_verify_compaction_references, -1);
+    }
+    else {
+        rb_define_singleton_method(rb_mGC, "compact", rb_f_notimplement, 0);
+        rb_define_singleton_method(rb_mGC, "auto_compact", rb_f_notimplement, 0);
+        rb_define_singleton_method(rb_mGC, "auto_compact=", rb_f_notimplement, 1);
+        rb_define_singleton_method(rb_mGC, "latest_compact_info", rb_f_notimplement, 0);
+        /* When !GC_COMPACTION_SUPPORTED, this method is not defined in gc.rb */
+        rb_define_singleton_method(rb_mGC, "verify_compaction_references", rb_f_notimplement, -1);
+    }
 
 #if GC_DEBUG_STRESS_TO_CLASS
     rb_define_singleton_method(rb_mGC, "add_stress_to_class", rb_gcdebug_add_stress_to_class, -1);
@@ -12770,6 +12987,7 @@ Init_GC(void)
 	OPT(MALLOC_ALLOCATED_SIZE);
 	OPT(MALLOC_ALLOCATED_SIZE_CHECK);
 	OPT(GC_PROFILE_DETAIL_MEMORY);
+	OPT(GC_COMPACTION_SUPPORTED);
 #undef OPT
 	OBJ_FREEZE(opts);
     }
