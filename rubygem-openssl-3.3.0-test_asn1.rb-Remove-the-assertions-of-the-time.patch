@@ -1,0 +1,62 @@
+From 561b56fcb552654e7c9449959f49fbc014798a58 Mon Sep 17 00:00:00 2001
+From: Jun Aruga <jaruga@redhat.com>
+Date: Tue, 12 Mar 2024 14:39:05 +0100
+Subject: [PATCH] test_asn1.rb: Remove the assertions of the time string format
+ without second.
+
+This commit fixes the following errors in the tests.
+Because the OpenSSL project changed the code to make the time string format
+without second invalid. So, we drop the assertions.
+
+```
+1) Error: test_generalizedtime(OpenSSL::TestASN1): OpenSSL::ASN1::ASN1Error: generalizedtime is too short
+/home/runner/work/ruby-openssl/ruby-openssl/test/openssl/test_asn1.rb:698:in `decode'
+/home/runner/work/ruby-openssl/ruby-openssl/test/openssl/test_asn1.rb:698:in `decode_test'
+/home/runner/work/ruby-openssl/ruby-openssl/test/openssl/test_asn1.rb:433:in `test_generalizedtime'
+     430:       OpenSSL::ASN1::GeneralizedTime.new(Time.utc(9999, 9, 8, 23, 43, 39))
+     431:     # LibreSSL 3.6.0 requires the seconds element
+     432:     return if libressl?
+  => 433:     decode_test B(%w{ 18 0D }) + "201612081934Z".b,
+     434:       OpenSSL::ASN1::GeneralizedTime.new(Time.utc(2016, 12, 8, 19, 34, 0))
+     435:     # not implemented
+     436:     # decode_test B(%w{ 18 13 }) + "20161208193439+0930".b,
+
+2) Error: test_utctime(OpenSSL::TestASN1): OpenSSL::ASN1::ASN1Error: utctime is too short
+/home/runner/work/ruby-openssl/ruby-openssl/test/openssl/test_asn1.rb:698:in `decode'
+/home/runner/work/ruby-openssl/ruby-openssl/test/openssl/test_asn1.rb:698:in `decode_test'
+/home/runner/work/ruby-openssl/ruby-openssl/test/openssl/test_asn1.rb:411:in `test_utctime'
+     408:     end
+     409:     # Seconds is omitted. LibreSSL 3.6.0 requires it
+     410:     return if libressl?
+  => 411:     decode_test B(%w{ 17 0B }) + "1609082343Z".b,
+     412:       OpenSSL::ASN1::UTCTime.new(Time.utc(2016, 9, 8, 23, 43, 0))
+     413:     # not implemented
+     414:     # decode_test B(%w{ 17 11 }) + "500908234339+0930".b,
+```
+---
+ test/openssl/test_asn1.rb | 5 -----
+ 1 file changed, 5 deletions(-)
+
+diff --git a/test/openssl/test_asn1.rb b/test/openssl/test_asn1.rb
+index af069cad6e..b5cf1adfd8 100644
+--- a/test/openssl/test_asn1.rb
++++ b/test/openssl/test_asn1.rb
+@@ -405,9 +405,6 @@ def test_set
+   def test_utctime
+     encode_decode_test B(%w{ 17 0D }) + "160908234339Z".b,
+       OpenSSL::ASN1::UTCTime.new(Time.utc(2016, 9, 8, 23, 43, 39))
+-    # Seconds is omitted
+-    decode_test B(%w{ 17 0B }) + "1609082343Z".b,
+-      OpenSSL::ASN1::UTCTime.new(Time.utc(2016, 9, 8, 23, 43, 0))
+     begin
+       # possible range of UTCTime is 1969-2068 currently
+       encode_decode_test B(%w{ 17 0D }) + "690908234339Z".b,
+@@ -433,8 +430,6 @@ def test_generalizedtime
+       OpenSSL::ASN1::GeneralizedTime.new(Time.utc(2016, 12, 8, 19, 34, 29))
+     encode_decode_test B(%w{ 18 0F }) + "99990908234339Z".b,
+       OpenSSL::ASN1::GeneralizedTime.new(Time.utc(9999, 9, 8, 23, 43, 39))
+-    decode_test B(%w{ 18 0D }) + "201612081934Z".b,
+-      OpenSSL::ASN1::GeneralizedTime.new(Time.utc(2016, 12, 8, 19, 34, 0))
+     # not implemented
+     # decode_test B(%w{ 18 13 }) + "20161208193439+0930".b,
+     #   OpenSSL::ASN1::GeneralizedTime.new(Time.new(2016, 12, 8, 19, 34, 39, "+09:30"))

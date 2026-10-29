@@ -1,0 +1,25 @@
+From 58ebf0f84a1dcb148f21aa589693d49d4e3be7de Mon Sep 17 00:00:00 2001
+From: Jun Aruga <jaruga@redhat.com>
+Date: Thu, 2 May 2024 17:23:09 +0200
+Subject: [PATCH] Allow OpenSSL 3 in Ruby OpenSSL 2.x.
+
+---
+ ext/openssl/extconf.rb | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/ext/openssl/extconf.rb b/ext/openssl/extconf.rb
+index 0dc1a5eb43..51de0d6e39 100644
+--- a/ext/openssl/extconf.rb
++++ b/ext/openssl/extconf.rb
+@@ -110,7 +110,7 @@ def find_openssl_library
+     !try_static_assert("OPENSSL_VERSION_MAJOR >= 3", "openssl/opensslv.h") }
+ end
+ unless version_ok
+-  raise "OpenSSL >= 1.0.1, < 3.0.0 or LibreSSL >= 2.5.0 is required"
++  # raise "OpenSSL >= 1.0.1, < 3.0.0 or LibreSSL >= 2.5.0 is required"
+ end
+ 
+ # Prevent wincrypt.h from being included, which defines conflicting macro with openssl/x509.h
+-- 
+2.44.0
+

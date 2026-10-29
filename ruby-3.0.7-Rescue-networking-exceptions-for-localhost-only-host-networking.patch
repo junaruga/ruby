@@ -1,0 +1,178 @@
+From 44a362a48b353018fa9f850eac680f5a12d5d29c Mon Sep 17 00:00:00 2001
+From: Jeremy Evans <code@jeremyevans.net>
+Date: Fri, 6 Aug 2021 15:36:33 -0700
+Subject: [PATCH 1/2] [ruby/rinda] Handle situations where IPv4 multicast is
+ not available
+
+Fixes [Bug #13864]
+
+https://github.com/ruby/rinda/commit/3cd620f38c
+---
+ test/rinda/test_rinda.rb | 73 +++++++++++++++++++++++-----------------
+ 1 file changed, 42 insertions(+), 31 deletions(-)
+
+diff --git a/test/rinda/test_rinda.rb b/test/rinda/test_rinda.rb
+index f155e88de1..3a7751a296 100644
+--- a/test/rinda/test_rinda.rb
++++ b/test/rinda/test_rinda.rb
+@@ -576,6 +576,22 @@ def test_take_bug_8215
+   end
+ end
+ 
++module RingIPv4
++  def ipv4_mc(rf)
++    begin
++      v4mc = rf.make_socket('239.0.0.1')
++    rescue Errno::ENETUNREACH, Errno::ENOBUFS, Errno::ENODEV
++      omit 'IPv4 multicast not available'
++    end
++
++    begin
++      yield v4mc
++    ensure
++      v4mc.close
++    end
++  end
++end
++
+ module RingIPv6
+   def prepare_ipv6(r)
+     begin
+@@ -618,6 +634,7 @@ def ipv6_mc(rf, hops = nil)
+ end
+ 
+ class TestRingServer < Test::Unit::TestCase
++  include RingIPv4
+ 
+   def setup
+     @port = Rinda::Ring_PORT
+@@ -690,27 +707,23 @@ def test_make_socket_unicast
+   end
+ 
+   def test_make_socket_ipv4_multicast
+-    begin
+-      v4mc = @rs.make_socket('239.0.0.1')
+-    rescue Errno::ENOBUFS => e
+-      skip "Missing multicast support in OS: #{e.message}"
+-    end
+-
+-    begin
+-      if Socket.const_defined?(:SO_REUSEPORT) then
+-        assert(v4mc.getsockopt(:SOCKET, :SO_REUSEPORT).bool)
+-      else
+-        assert(v4mc.getsockopt(:SOCKET, :SO_REUSEADDR).bool)
+-      end
+-    rescue TypeError
+-      if /aix/ =~ RUBY_PLATFORM
+-        skip "Known bug in getsockopt(2) on AIX"
++    ipv4_mc(@rs) do |v4mc|
++      begin
++        if Socket.const_defined?(:SO_REUSEPORT) then
++          assert(v4mc.getsockopt(:SOCKET, :SO_REUSEPORT).bool)
++        else
++          assert(v4mc.getsockopt(:SOCKET, :SO_REUSEADDR).bool)
++        end
++      rescue TypeError
++        if /aix/ =~ RUBY_PLATFORM
++          omit "Known bug in getsockopt(2) on AIX"
++        end
++        raise $!
+       end
+-      raise $!
+-    end
+ 
+-    assert_equal('0.0.0.0', v4mc.local_address.ip_address)
+-    assert_equal(@port,     v4mc.local_address.ip_port)
++      assert_equal('0.0.0.0', v4mc.local_address.ip_address)
++      assert_equal(@port,     v4mc.local_address.ip_port)
++    end
+   end
+ 
+   def test_make_socket_ipv6_multicast
+@@ -739,8 +752,8 @@ def test_ring_server_ipv4_multicast
+     @rs.shutdown
+     begin
+       @rs = Rinda::RingServer.new(@ts, [['239.0.0.1', '0.0.0.0']], @port)
+-    rescue Errno::ENOBUFS => e
+-      skip "Missing multicast support in OS: #{e.message}"
++    rescue Errno::ENOBUFS, Errno::ENODEV => e
++      omit "Missing multicast support in OS: #{e.message}"
+     end
+ 
+     v4mc = @rs.instance_variable_get('@sockets').first
+@@ -841,6 +854,7 @@ def wait_for(n)
+ 
+ class TestRingFinger < Test::Unit::TestCase
+   include RingIPv6
++  include RingIPv4
+ 
+   def setup
+     @rf = Rinda::RingFinger.new
+@@ -860,12 +874,10 @@ def test_make_socket_unicast
+   end
+ 
+   def test_make_socket_ipv4_multicast
+-    v4mc = @rf.make_socket('239.0.0.1')
+-
+-    assert_equal(1, v4mc.getsockopt(:IPPROTO_IP, :IP_MULTICAST_LOOP).ipv4_multicast_loop)
+-    assert_equal(1, v4mc.getsockopt(:IPPROTO_IP, :IP_MULTICAST_TTL).ipv4_multicast_ttl)
+-  ensure
+-    v4mc.close if v4mc
++    ipv4_mc(@rf) do |v4mc|
++      assert_equal(1, v4mc.getsockopt(:IPPROTO_IP, :IP_MULTICAST_LOOP).ipv4_multicast_loop)
++      assert_equal(1, v4mc.getsockopt(:IPPROTO_IP, :IP_MULTICAST_TTL).ipv4_multicast_ttl)
++    end
+   end
+ 
+   def test_make_socket_ipv6_multicast
+@@ -877,10 +889,9 @@ def test_make_socket_ipv6_multicast
+ 
+   def test_make_socket_ipv4_multicast_hops
+     @rf.multicast_hops = 2
+-    v4mc = @rf.make_socket('239.0.0.1')
+-    assert_equal(2, v4mc.getsockopt(:IPPROTO_IP, :IP_MULTICAST_TTL).ipv4_multicast_ttl)
+-  ensure
+-    v4mc.close if v4mc
++    ipv4_mc(@rf) do |v4mc|
++      assert_equal(2, v4mc.getsockopt(:IPPROTO_IP, :IP_MULTICAST_TTL).ipv4_multicast_ttl)
++    end
+   end
+ 
+   def test_make_socket_ipv6_multicast_hops
+
+From fa48249713ca02d53603ecdbd5e599918cc51f14 Mon Sep 17 00:00:00 2001
+From: Nobuyoshi Nakada <nobu@ruby-lang.org>
+Date: Sat, 30 Sep 2023 17:41:14 +0900
+Subject: [PATCH 2/2] Fix failures when all network interfaces are down
+
+===
+Downstream consideration:
+The original commit this was backported from:
+https://github.com/ruby/ruby/commit/94e79e4c2da8d69f45e67228a051bb1c09a367ec
+appends Errno:ENETUNREACH to existing timeout. In a commit
+before this:
+https://github.com/ruby/ruby/commit/e4f91bbdbaa6ab3125f24967414ac5300bb244f5
+The Errno::ETIMEDOUT was used, after that commit the IO::TimeoutError.
+Since the IO class error is used in Ruby 3.2.0 onward, let's just copy
+only the relevant addition, as 3.0's code should not raise that
+exception from IO class.
+
+Changes from spec/ruby/library/socket/tcpsocket/share/new.rb were
+omitted as those tests are not present on 3.0.7.
+---
+ test/socket/test_tcp.rb | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/test/socket/test_tcp.rb b/test/socket/test_tcp.rb
+index 9aa716f7ec..6a73e8c17d 100644
+--- a/test/socket/test_tcp.rb
++++ b/test/socket/test_tcp.rb
+@@ -70,7 +70,7 @@ def test_initialize_resolv_timeout
+   end
+ 
+   def test_initialize_connect_timeout
+-    assert_raise(Errno::ETIMEDOUT) do
++    assert_raise(Errno::ETIMEDOUT, Errno::ENETUNREACH) do
+       TCPSocket.new("192.0.2.1", 80, connect_timeout: 0)
+     end
+   end

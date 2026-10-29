@@ -1,0 +1,255 @@
+From 44dda22bf13d571067cfc5321ed72cad67256767 Mon Sep 17 00:00:00 2001
+From: st0012 <stan001212@gmail.com>
+Date: Sun, 16 Jan 2022 22:20:05 +0000
+Subject: [PATCH 1/3] Use require_relative to require lib files
+
+1. `require` can mislead Ruby to load system irb's files and cause
+   constant redefined warnings as other code loads the same module/class
+   from lib folder.
+2. Most files already use `require_relative`.
+---
+ lib/irb/color.rb         | 2 +-
+ lib/irb/color_printer.rb | 2 +-
+ lib/irb/inspector.rb     | 2 +-
+ libexec/irb              | 2 +-
+ 4 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/lib/irb/color.rb b/lib/irb/color.rb
+index cfbb3cc668..4f6258adf8 100644
+--- a/lib/irb/color.rb
++++ b/lib/irb/color.rb
+@@ -1,7 +1,7 @@
+ # frozen_string_literal: true
+ require 'reline'
+ require 'ripper'
+-require 'irb/ruby-lex'
++require_relative 'ruby-lex'
+ 
+ module IRB # :nodoc:
+   module Color
+diff --git a/lib/irb/color_printer.rb b/lib/irb/color_printer.rb
+index 30c6825750..78f0b51520 100644
+--- a/lib/irb/color_printer.rb
++++ b/lib/irb/color_printer.rb
+@@ -1,6 +1,6 @@
+ # frozen_string_literal: true
+ require 'pp'
+-require 'irb/color'
++require_relative 'color'
+ 
+ module IRB
+   class ColorPrinter < ::PP
+diff --git a/lib/irb/inspector.rb b/lib/irb/inspector.rb
+index c2f3b605db..8c37c0f174 100644
+--- a/lib/irb/inspector.rb
++++ b/lib/irb/inspector.rb
+@@ -114,7 +114,7 @@ def inspect_value(v)
+     end
+     result
+   }
+-  Inspector.def_inspector([true, :pp, :pretty_inspect], proc{require "irb/color_printer"}){|v|
++  Inspector.def_inspector([true, :pp, :pretty_inspect], proc{require_relative "color_printer"}){|v|
+     if IRB.conf[:MAIN_CONTEXT]&.use_colorize?
+       IRB::ColorPrinter.pp(v, '').chomp
+     else
+diff --git a/libexec/irb b/libexec/irb
+index c64ee85fbd..ffc97867d0 100755
+--- a/libexec/irb
++++ b/libexec/irb
+@@ -6,6 +6,6 @@
+ #   	by Keiju ISHITSUKA(keiju@ruby-lang.org)
+ #
+ 
+-require "irb"
++require_relative '../lib/irb'
+ 
+ IRB.start(__FILE__)
+
+From e885a5bf9d20b45737746c5f2ae91059c09830cc Mon Sep 17 00:00:00 2001
+From: st0012 <stan001212@gmail.com>
+Date: Mon, 17 Jan 2022 11:45:16 +0000
+Subject: [PATCH 2/3] Use require_relative to load extensions/commands
+
+---
+ lib/irb/extend-command.rb | 48 +++++++++++++++++++--------------------
+ 1 file changed, 24 insertions(+), 24 deletions(-)
+
+diff --git a/lib/irb/extend-command.rb b/lib/irb/extend-command.rb
+index 339e9e6084..d6fb19038d 100644
+--- a/lib/irb/extend-command.rb
++++ b/lib/irb/extend-command.rb
+@@ -47,7 +47,7 @@ def irb_context
+ 
+     @EXTEND_COMMANDS = [
+       [
+-        :irb_current_working_workspace, :CurrentWorkingWorkspace, "irb/cmd/chws",
++        :irb_current_working_workspace, :CurrentWorkingWorkspace, "cmd/chws",
+         [:irb_print_working_workspace, OVERRIDE_ALL],
+         [:irb_cwws, OVERRIDE_ALL],
+         [:irb_pwws, OVERRIDE_ALL],
+@@ -59,7 +59,7 @@ def irb_context
+         [:irb_pwb, OVERRIDE_ALL],
+       ],
+       [
+-        :irb_change_workspace, :ChangeWorkspace, "irb/cmd/chws",
++        :irb_change_workspace, :ChangeWorkspace, "cmd/chws",
+         [:irb_chws, OVERRIDE_ALL],
+         [:irb_cws, OVERRIDE_ALL],
+         [:chws, NO_OVERRIDE],
+@@ -70,13 +70,13 @@ def irb_context
+       ],
+ 
+       [
+-        :irb_workspaces, :Workspaces, "irb/cmd/pushws",
++        :irb_workspaces, :Workspaces, "cmd/pushws",
+         [:workspaces, NO_OVERRIDE],
+         [:irb_bindings, OVERRIDE_ALL],
+         [:bindings, NO_OVERRIDE],
+       ],
+       [
+-        :irb_push_workspace, :PushWorkspace, "irb/cmd/pushws",
++        :irb_push_workspace, :PushWorkspace, "cmd/pushws",
+         [:irb_pushws, OVERRIDE_ALL],
+         [:pushws, NO_OVERRIDE],
+         [:irb_push_binding, OVERRIDE_ALL],
+@@ -84,7 +84,7 @@ def irb_context
+         [:pushb, NO_OVERRIDE],
+       ],
+       [
+-        :irb_pop_workspace, :PopWorkspace, "irb/cmd/pushws",
++        :irb_pop_workspace, :PopWorkspace, "cmd/pushws",
+         [:irb_popws, OVERRIDE_ALL],
+         [:popws, NO_OVERRIDE],
+         [:irb_pop_binding, OVERRIDE_ALL],
+@@ -93,55 +93,55 @@ def irb_context
+       ],
+ 
+       [
+-        :irb_load, :Load, "irb/cmd/load"],
++        :irb_load, :Load, "cmd/load"],
+       [
+-        :irb_require, :Require, "irb/cmd/load"],
++        :irb_require, :Require, "cmd/load"],
+       [
+-        :irb_source, :Source, "irb/cmd/load",
++        :irb_source, :Source, "cmd/load",
+         [:source, NO_OVERRIDE],
+       ],
+ 
+       [
+-        :irb, :IrbCommand, "irb/cmd/subirb"],
++        :irb, :IrbCommand, "cmd/subirb"],
+       [
+-        :irb_jobs, :Jobs, "irb/cmd/subirb",
++        :irb_jobs, :Jobs, "cmd/subirb",
+         [:jobs, NO_OVERRIDE],
+       ],
+       [
+-        :irb_fg, :Foreground, "irb/cmd/subirb",
++        :irb_fg, :Foreground, "cmd/subirb",
+         [:fg, NO_OVERRIDE],
+       ],
+       [
+-        :irb_kill, :Kill, "irb/cmd/subirb",
++        :irb_kill, :Kill, "cmd/subirb",
+         [:kill, OVERRIDE_PRIVATE_ONLY],
+       ],
+ 
+       [
+-        :irb_help, :Help, "irb/cmd/help",
++        :irb_help, :Help, "cmd/help",
+         [:help, NO_OVERRIDE],
+       ],
+ 
+       [
+-        :irb_info, :Info, "irb/cmd/info"
++        :irb_info, :Info, "cmd/info"
+       ],
+ 
+       [
+-        :irb_ls, :Ls, "irb/cmd/ls",
++        :irb_ls, :Ls, "cmd/ls",
+         [:ls, NO_OVERRIDE],
+       ],
+ 
+       [
+-        :irb_measure, :Measure, "irb/cmd/measure",
++        :irb_measure, :Measure, "cmd/measure",
+         [:measure, NO_OVERRIDE],
+       ],
+ 
+       [
+-        :irb_show_source, :ShowSource, "irb/cmd/show_source",
++        :irb_show_source, :ShowSource, "cmd/show_source",
+         [:show_source, NO_OVERRIDE],
+       ],
+ 
+       [
+-        :irb_whereami, :Whereami, "irb/cmd/whereami",
++        :irb_whereami, :Whereami, "cmd/whereami",
+         [:whereami, NO_OVERRIDE],
+       ],
+ 
+@@ -187,7 +187,7 @@ def self.def_extend_command(cmd_name, cmd_class, load_file = nil, *aliases)
+         kwargs = ", **kwargs" if RUBY_ENGINE == "ruby" && RUBY_VERSION >= "2.7.0"
+         line = __LINE__; eval %[
+           def #{cmd_name}(*opts#{kwargs}, &b)
+-            require "#{load_file}"
++            require_relative "#{load_file}"
+             arity = ExtendCommand::#{cmd_class}.instance_method(:execute).arity
+             args = (1..(arity < 0 ? ~arity : arity)).map {|i| "arg" + i.to_s }
+             args << "*opts#{kwargs}" if arity < 0
+@@ -262,10 +262,10 @@ module ContextExtender
+     CE = ContextExtender # :nodoc:
+ 
+     @EXTEND_COMMANDS = [
+-      [:eval_history=, "irb/ext/history.rb"],
+-      [:use_tracer=, "irb/ext/tracer.rb"],
+-      [:use_loader=, "irb/ext/use-loader.rb"],
+-      [:save_history=, "irb/ext/save-history.rb"],
++      [:eval_history=, "ext/history.rb"],
++      [:use_tracer=, "ext/tracer.rb"],
++      [:use_loader=, "ext/use-loader.rb"],
++      [:save_history=, "ext/save-history.rb"],
+     ]
+ 
+     # Installs the default context extensions as irb commands:
+@@ -288,7 +288,7 @@ def self.def_extend_command(cmd_name, load_file, *aliases)
+       line = __LINE__; Context.module_eval %[
+         def #{cmd_name}(*opts, &b)
+           Context.module_eval {remove_method(:#{cmd_name})}
+-          require "#{load_file}"
++          require_relative "#{load_file}"
+           __send__ :#{cmd_name}, *opts, &b
+         end
+         for ali in aliases
+
+From 19431c7ccc23545b9e973d5e0993c20422f42796 Mon Sep 17 00:00:00 2001
+From: st0012 <stan001212@gmail.com>
+Date: Mon, 17 Jan 2022 15:17:18 +0000
+Subject: [PATCH 3/3] require_relative can't be used for default gems' exe
+ files
+
+The `exe` folder and `lib` folder of default gems don't locate under the
+same place. While `exe/irb` will be under the gem folder, `irb.rb` will be
+under `lib/ruby/VERSION/`.
+
+So `require_relative` will make `irb` unuseable when shipped with Ruby.
+
+Related discussion in the comments: https://github.com/ruby/irb/pull/335
+---
+ libexec/irb | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/libexec/irb b/libexec/irb
+index ffc97867d0..c64ee85fbd 100755
+--- a/libexec/irb
++++ b/libexec/irb
+@@ -6,6 +6,6 @@
+ #   	by Keiju ISHITSUKA(keiju@ruby-lang.org)
+ #
+ 
+-require_relative '../lib/irb'
++require "irb"
+ 
+ IRB.start(__FILE__)

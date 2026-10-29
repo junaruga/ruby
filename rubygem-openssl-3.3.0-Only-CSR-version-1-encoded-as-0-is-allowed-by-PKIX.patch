@@ -1,0 +1,61 @@
+From b7ce8df9f0d03a590adbddaaa5f5ce4442e696ec Mon Sep 17 00:00:00 2001
+From: Job Snijders <job@sobornost.net>
+Date: Mon, 25 Mar 2024 12:20:13 +0000
+Subject: [PATCH] Only CSR version 1 (encoded as 0) is allowed by PKIX
+ standards
+
+RFC 2986, section 4.1 only defines version 1 for CSRs. This version
+is encoded as a 0. Starting with OpenSSL 3.3, setting the CSR version
+to anything but 1 fails.
+
+Do not attempt to generate a CSR with invalid version (which now fails)
+and invalidate the CSR in test_sign_and_verify_rsa_sha1 by changing its
+subject rather than using an invalid version.
+
+This commit fixes the following error.
+
+```
+ 2) Error: test_version(OpenSSL::TestX509Request): OpenSSL::X509::RequestError:
+X509_REQ_set_version: passed invalid argument
+/home/runner/work/openssl/openssl/test/openssl/test_x509req.rb:18:in `version='
+/home/runner/work/openssl/openssl/test/openssl/test_x509req.rb:18:in `issue_csr'
+/home/runner/work/openssl/openssl/test/openssl/test_x509req.rb:43:in
+`test_version'
+     40:     req = OpenSSL::X509::Request.new(req.to_der)
+     41:     assert_equal(0, req.version)
+     42:
+  => 43:     req = issue_csr(1, @dn, @rsa1024, OpenSSL::Digest.new('SHA256'))
+     44:     assert_equal(1, req.version)
+     45:     req = OpenSSL::X509::Request.new(req.to_der)
+     46:     assert_equal(1, req.version)
+```
+---
+ test/openssl/test_x509req.rb | 8 ++------
+ 1 file changed, 2 insertions(+), 6 deletions(-)
+
+diff --git a/test/openssl/test_x509req.rb b/test/openssl/test_x509req.rb
+index ee9c678fbb..2a14afc9a1 100644
+--- a/test/openssl/test_x509req.rb
++++ b/test/openssl/test_x509req.rb
+@@ -39,11 +39,6 @@ def test_version
+     assert_equal(0, req.version)
+     req = OpenSSL::X509::Request.new(req.to_der)
+     assert_equal(0, req.version)
+-
+-    req = issue_csr(1, @dn, @rsa1024, OpenSSL::Digest.new('SHA256'))
+-    assert_equal(1, req.version)
+-    req = OpenSSL::X509::Request.new(req.to_der)
+-    assert_equal(1, req.version)
+   end
+ 
+   def test_subject
+@@ -106,8 +101,8 @@ def test_sign_and_verify_rsa_sha1
+     assert_equal(false, req.verify(@rsa2048))
+     assert_equal(false, request_error_returns_false { req.verify(@dsa256) })
+     assert_equal(false, request_error_returns_false { req.verify(@dsa512) })
+-    req.version = 1
++    req.subject = OpenSSL::X509::Name.parse("/C=JP/CN=FooBarFooBar")
+     assert_equal(false, req.verify(@rsa1024))
+   end
+ 
+   def test_sign_and_verify_rsa_md5

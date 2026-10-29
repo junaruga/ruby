@@ -1,0 +1,29 @@
+From 960a0cdc544a226fed31c8988edb4fefe6990154 Mon Sep 17 00:00:00 2001
+From: MSP-Greg <Greg.mpls@gmail.com>
+Date: Thu, 20 Jun 2024 19:33:06 -0500
+Subject: [PATCH] [ruby/net-http] test_https.rb - fix
+ test_session_reuse_but_expire
+
+https://github.com/ruby/net-http/commit/5544243c41
+---
+ test/net/http/test_https.rb | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/test/net/http/test_https.rb b/test/net/http/test_https.rb
+index 7b97e39586..a2f17ce336 100644
+--- a/test/net/http/test_https.rb
++++ b/test/net/http/test_https.rb
+@@ -183,11 +183,11 @@ def test_session_reuse_but_expire
+     http.use_ssl = true
+     http.cert_store = TEST_STORE
+ 
+-    http.ssl_timeout = -1
++    http.ssl_timeout = 1
+     http.start
+     http.get("/")
+     http.finish
+-
++    sleep 1.25
+     http.start
+     http.get("/")
+ 
